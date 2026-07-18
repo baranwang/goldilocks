@@ -38,6 +38,10 @@ function runConfiguredHook(eventName, env = {}) {
   });
 }
 
+function posixTest(name, fn) {
+  test(name, { skip: process.platform === 'win32' ? 'requires /bin/sh' : false }, fn);
+}
+
 function makePluginRoot(t, policyBody = 'POLICY BODY') {
   const pluginRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'goldilocks-hook-'));
   t.after(() => fs.rmSync(pluginRoot, { recursive: true, force: true }));
@@ -108,7 +112,7 @@ test('SubagentStart supports CLAUDE_PLUGIN_ROOT compatibility fallback', (t) => 
 });
 
 for (const eventName of ['SessionStart', 'SubagentStart']) {
-  test(`${eventName} configured POSIX command prefers PLUGIN_ROOT`, (t) => {
+  posixTest(`${eventName} configured POSIX command prefers PLUGIN_ROOT`, (t) => {
     const pluginRoot = makePluginRoot(t, 'PRIMARY POLICY');
     const compatibilityRoot = makePluginRoot(t, 'FALLBACK POLICY');
     const result = runConfiguredHook(eventName, {
@@ -123,7 +127,7 @@ for (const eventName of ['SessionStart', 'SubagentStart']) {
     );
   });
 
-  test(`${eventName} configured POSIX command supports CLAUDE_PLUGIN_ROOT fallback`, (t) => {
+  posixTest(`${eventName} configured POSIX command supports CLAUDE_PLUGIN_ROOT fallback`, (t) => {
     const pluginRoot = makePluginRoot(t);
     const result = runConfiguredHook(eventName, { CLAUDE_PLUGIN_ROOT: pluginRoot });
     assert.equal(result.status, 0, result.stderr);
@@ -136,7 +140,7 @@ for (const eventName of ['SessionStart', 'SubagentStart']) {
     });
   });
 
-  test(`${eventName} configured POSIX command fails open silently`, (t) => {
+  posixTest(`${eventName} configured POSIX command fails open silently`, (t) => {
     let result = runConfiguredHook(eventName);
     assert.equal(result.status, 0);
     assert.equal(result.stdout, '');
