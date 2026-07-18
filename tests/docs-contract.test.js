@@ -13,6 +13,7 @@ test('README leads with the narrow positioning and exact install identity', () =
   assert.match(readme, /codex plugin marketplace add \.\/|codex plugin marketplace add \$PWD/);
   assert.match(readme, /codex plugin add goldilocks@goldilocks-router/);
   assert.match(readme, /quick[\s\S]*explore[\s\S]*build[\s\S]*reason[\s\S]*deep/);
+  assert.match(readme, /explore[^\n]*Prefer Luna\/low; fall back to Terra\/low, or Terra\/medium only for broader synthesis/i);
   assert.match(readme, /npm test/);
 });
 

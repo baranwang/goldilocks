@@ -135,7 +135,7 @@ test('policy contains exact per-row route model and effort choices', () => {
     {
       route: 'explore',
       model: 'Prefer `gpt-5.6-luna`; if Luna is not allowed, use `gpt-5.6-terra`; otherwise inherit',
-      effort: '`low` or `medium`',
+      effort: '`low`; with Terra, use `medium` only when broader synthesis is needed',
     },
     {
       route: 'build',

@@ -23,7 +23,7 @@ task, and changes only supported `model` and `reasoning_effort` fields.
 | Route | Intended work | Default behavior |
 |---|---|---|
 | `quick`（快速） | Mechanical, local, low-risk | Prefer Luna/low; fall back to Terra/low |
-| `explore`（探索） | Read-only search and synthesis | Prefer Luna/low; fall back to Terra/medium |
+| `explore`（探索） | Read-only search and synthesis | Prefer Luna/low; fall back to Terra/low, or Terra/medium only for broader synthesis |
 | `build`（实现） | Routine implementation using existing patterns | Inherit parent model/medium |
 | `reason`（推理） | Debugging, review, security, difficult edge cases | Prefer Sol/high; otherwise inherit/high |
 | `deep`（深度） | Architecture, migrations, concurrency, cross-module ambiguity | Prefer Sol/xhigh; otherwise inherit/xhigh |

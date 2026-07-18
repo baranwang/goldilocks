@@ -40,12 +40,13 @@ Choose the lowest sufficient route. File count alone does not determine difficul
 | Route | Typical child task | Preferred model behavior | Effort |
 |---|---|---|---|
 | `quick` | Typo, formatting, explicit one-spot change, mechanical transformation | Prefer `gpt-5.6-luna`; if Luna is not an allowed explicit override, use `gpt-5.6-terra`; otherwise inherit | `low` |
-| `explore` | Read-only code search, repository mapping, summarization, evidence gathering | Prefer `gpt-5.6-luna`; if Luna is not allowed, use `gpt-5.6-terra`; otherwise inherit | `low` or `medium` |
+| `explore` | Read-only code search, repository mapping, summarization, evidence gathering | Prefer `gpt-5.6-luna`; if Luna is not allowed, use `gpt-5.6-terra`; otherwise inherit | `low`; with Terra, use `medium` only when broader synthesis is needed |
 | `build` | Routine implementation or fix following existing patterns | Omit `model` and inherit the parent model | `medium` |
 | `reason` | Debugging, review, security analysis, planning, difficult tests or edge cases | Prefer `gpt-5.6-sol`; if Sol is unavailable, inherit | `high` |
 | `deep` | Architecture, migration, concurrency, cross-module redesign, highly ambiguous autonomous work | Prefer `gpt-5.6-sol`; if Sol is unavailable, inherit the strongest current configuration | `xhigh` |
 
 If the preferred effort is unsupported, use the closest supported effort without changing task scope.
+For `explore`, `low` remains preferred; use `medium` only when broader synthesis is needed and Terra is the selected schema-supported fallback.
 
 ## Exact argument examples
 

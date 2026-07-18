@@ -6,10 +6,13 @@ const path = require('node:path');
 const SUPPORTED_EVENTS = new Set(['SessionStart', 'SubagentStart']);
 
 function stripFrontmatter(text) {
-  return String(text)
-    .replace(/^\uFEFF/, '')
-    .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '')
-    .trim();
+  const body = String(text).replace(/^\uFEFF/, '');
+  if (!/^---\r?\n/.test(body)) return body.trim();
+
+  const frontmatter = body.match(/^---\r?\n(?:[\s\S]*?\r?\n)?---(?:\r?\n|$)/);
+  if (!frontmatter) return '';
+
+  return body.slice(frontmatter[0].length).trim();
 }
 
 function buildHookOutput(eventName, additionalContext) {
