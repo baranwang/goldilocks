@@ -34,6 +34,7 @@ test('plugin manifest is minimal and does not claim workflow or tool capabilitie
   assert.equal(manifest.version, '0.1.0');
   assert.equal(manifest.description, 'Same workflow. Right-sized subagents.');
   assert.equal(manifest.skills, './skills/');
+  assert.deepEqual(manifest.author, { name: 'Goldilocks contributors' });
   assert.equal(manifest.interface.displayName, 'Goldilocks');
   assert.equal(manifest.interface.category, 'Developer Tools');
   assert.deepEqual(manifest.interface.capabilities, ['Instructions', 'Lifecycle hooks']);

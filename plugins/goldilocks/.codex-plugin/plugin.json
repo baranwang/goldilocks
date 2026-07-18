@@ -2,6 +2,9 @@
   "name": "goldilocks",
   "version": "0.1.0",
   "description": "Same workflow. Right-sized subagents.",
+  "author": {
+    "name": "Goldilocks contributors"
+  },
   "license": "MIT",
   "keywords": [
     "codex",
