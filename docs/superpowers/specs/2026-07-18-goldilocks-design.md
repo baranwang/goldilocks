@@ -16,13 +16,8 @@ The first version contains no classifier service, model catalog, MCP server, ins
 - Plugin slug: `goldilocks`
 - Marketplace name: `goldilocks`
 - Codex installation identity: `goldilocks@goldilocks`
-- npm package name: `@baranwang/goldilocks` (private development package)
 - Tagline: **Same workflow. Right-sized subagents.**
 - Chinese positioning: **工作流不变，子代理刚刚好。**
-
-The scoped npm package name is separate from the Codex installation identity.
-The package remains private to prevent accidental publication. The plugin is
-installed as `goldilocks@goldilocks`.
 
 The name is intentionally retained despite another Codex workflow plugin using
 Goldilocks. The user accepts the collision risk of using the unqualified
@@ -124,8 +119,8 @@ Goldilocks is Codex-only and intentionally does not support the
 `CLAUDE_PLUGIN_ROOT` compatibility alias. The runtime uses `/bin/sh` plus POSIX
 `awk` on macOS/Linux and PowerShell on Windows. It does not access the network,
 transcripts, project files, or user configuration, and it writes no state.
-Users do not need Node.js or Python. Node.js may remain a contributor-only test
-tool and is not a plugin runtime dependency.
+Users do not need Node.js or Python for the installed runtime. Python is used
+only to run the official validators.
 
 ## Runtime Flow
 
@@ -234,22 +229,10 @@ Fail-open behavior is appropriate because routing is a cost optimization, not a 
 - Validate the skill structure with the skill validator.
 - Confirm the hook configuration references files inside the plugin root.
 
-### Unit tests
+### Repository validation
 
-Keep one compact runtime-focused test file. Cover only failures that would make
-the installed plugin incorrect or unavailable:
-
-- valid and malformed frontmatter;
-- `SessionStart` and `SubagentStart` output;
-- `PLUGIN_ROOT` resolution;
-- POSIX wrapper execution and silent fail-open behavior;
-- static Windows wrapper and PowerShell-script structure;
-- injection of the real `SKILL.md` body within the context budget.
-
-Delete README, license, package-metadata, and detailed policy-wording contract
-tests. Plugin and skill formats are covered by the official validators. Route
-wording is reviewed as product policy rather than locked to incidental English
-sentences. Node's built-in test runner is contributor tooling only.
+The repository intentionally has no package manifest or local test harness.
+Plugin and skill formats are validated by the official validators.
 
 ### Isolated Codex smoke test
 

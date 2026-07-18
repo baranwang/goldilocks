@@ -2,15 +2,14 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Remove Goldilocks' user-facing Node.js runtime dependency, rename its npm and Codex marketplace identities, and keep only tests that protect real installed behavior.
+**Goal:** Remove Goldilocks' user-facing Node.js runtime dependency and all Node contributor tooling, leaving a package-less repository validated by the official validators and an isolated plugin installation.
 
-**Architecture:** Codex continues to load one policy from `SKILL.md` at `SessionStart` and `SubagentStart`. macOS/Linux use a POSIX `sh` + `awk` hook; Windows uses PowerShell. Node.js remains optional contributor tooling for one compact cross-platform runtime test file and is not required to use the plugin.
+**Architecture:** Codex continues to load one policy from `SKILL.md` at `SessionStart` and `SubagentStart`. macOS/Linux use a POSIX `sh` + `awk` hook; Windows uses PowerShell. The repository has no package manifest or local test harness.
 
-**Tech Stack:** Codex lifecycle hooks, POSIX `sh`/`awk`, Windows PowerShell, Node's built-in test runner for contributor tests, Codex plugin and skill validators, isolated `CODEX_HOME` smoke tests.
+**Tech Stack:** Codex lifecycle hooks, POSIX `sh`/`awk`, Windows PowerShell, Codex plugin and skill validators, isolated `CODEX_HOME` installation verification.
 
 ## Global Constraints
 
-- npm package name: `@baranwang/goldilocks`; keep `private: true`.
 - Marketplace name: `goldilocks`; Codex install identity: `goldilocks@goldilocks`.
 - Plugin slug remains `goldilocks`.
 - Runtime uses only Codex-native `PLUGIN_ROOT`; do not use or mention `CLAUDE_PLUGIN_ROOT` in runtime files.
@@ -18,7 +17,8 @@
 - macOS/Linux runtime may use only `/bin/sh` and POSIX `awk`; Windows runtime may use Windows PowerShell.
 - Preserve `SessionStart` and `SubagentStart`, the matcher, timeout, status message, output envelope, workflow-invariance policy, and fail-open behavior.
 - Runtime performs no network access and writes no state.
-- Delete README/license/package/policy wording contract tests; retain only compact runtime/integration tests plus official validators and isolated smoke.
+- Do not add a package manifest, local test harness, test script, CI, dependency, or replacement test system.
+- Use only the official validators and isolated package-less installation verification.
 
 ---
 
@@ -28,13 +28,12 @@
 - Create: `plugins/goldilocks/hooks/inject-router.ps1` — Windows policy loader and JSON emitter.
 - Modify: `plugins/goldilocks/hooks/hooks.json` — dispatch to the native script for each platform.
 - Delete: `plugins/goldilocks/hooks/inject-router.js` — removes Node from plugin runtime.
-- Rewrite: `tests/inject-router.test.js` — one compact native-runtime test surface.
-- Delete: `tests/package-contract.test.js`.
-- Delete: `tests/policy-contract.test.js`.
-- Delete: `tests/docs-contract.test.js`.
+- Delete: `tests/inject-router.test.js` — removes the final local test harness.
 - Modify: `.agents/plugins/marketplace.json` — marketplace name/display name.
-- Modify: `package.json` — scoped npm package name.
 - Modify: `README.md` — new install identity and runtime requirements.
+
+> **Historical record:** Tasks 1 and 2 describe superseded implementation work.
+> Task 3 and the final checklist define the current package-less, test-less state.
 
 ### Task 1: Replace the Node Hook with Native Platform Scripts
 
@@ -515,11 +514,25 @@ Expected: commit succeeds and working tree is clean.
 ## Final Verification Checklist
 
 - [ ] The installed plugin identity is `goldilocks@goldilocks`.
-- [ ] `package.json.name` is `@baranwang/goldilocks` and `private` remains true.
+- [ ] `package.json` and `tests/` do not exist.
 - [ ] Runtime hook files contain no Node.js, Python, or Claude compatibility dependency.
 - [ ] macOS/Linux use the POSIX script; Windows uses the PowerShell script.
-- [ ] Only `tests/inject-router.test.js` remains.
-- [ ] `npm test` passes the compact runtime suite.
+- [ ] README and design state that the repository has no package manifest or local test harness.
 - [ ] Plugin and skill validators pass.
-- [ ] Isolated no-spawn and one-spawn smoke checks pass.
-- [ ] Temporary credentials and JSONL files are deleted.
+- [ ] Isolated package-less marketplace add, plugin add, and enabled-status checks pass.
+- [ ] Temporary credentials are deleted.
+
+### Task 3: Remove the Final Node Contributor Tooling
+
+**Files:**
+- Delete: `package.json`
+- Delete: `tests/inject-router.test.js`
+- Modify: `README.md`
+- Modify: `docs/superpowers/specs/2026-07-18-goldilocks-design.md`
+- Modify: this plan
+
+**User-directed final state:** Delete the final package manifest and local test
+harness without replacement. Keep runtime, policy, manifests, marketplace
+metadata, and LICENSE unchanged. Validate only with the official plugin and
+skill validators, `git diff --check`, and an isolated package-less marketplace
+installation that reports `goldilocks@goldilocks` enabled.

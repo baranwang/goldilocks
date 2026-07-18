@@ -46,17 +46,17 @@ codex plugin add goldilocks@goldilocks
 Open `/hooks`, review and trust the Goldilocks hooks, then start a new Codex
 task.
 
-## Development
+## Validation
 
 ```bash
-npm test
 python3 "$HOME/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py" plugins/goldilocks
 python3 "$HOME/.codex/skills/.system/skill-creator/scripts/quick_validate.py" plugins/goldilocks/skills/goldilocks
 ```
 
 The installed runtime uses POSIX `sh`/`awk` on macOS and Linux, and PowerShell
-on Windows. Users do not need Node.js or Python. Node.js is only needed by
-contributors who run `npm test`.
+on Windows. Neither users nor contributors need Node.js or Python for the
+installed runtime. Python is used only to run the official validators shown
+above.
 
 ## Name
 
