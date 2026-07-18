@@ -33,6 +33,18 @@ process intact, avoids using expensive large models for simple tasks, reduces
 unnecessary high-cost subagent calls, and helps conserve Codex subscription
 quota.
 
+## Installation
+
+Run in a terminal:
+
+```bash
+codex plugin marketplace add baranwang/goldilocks
+codex plugin add goldilocks@goldilocks
+```
+
+Use `/hooks` to review and trust the Goldilocks hook scripts, then start a new
+Codex task for the plugin to take effect.
+
 ## How it works
 
 `SessionStart` and `SubagentStart` hooks inject a compact policy from
@@ -59,18 +71,6 @@ workflow settings always take precedence. If `fork_turns` is omitted or set to
 does not allow compute overrides, Goldilocks keeps `fork_turns` unchanged and
 inherits the existing configuration. It never changes context forking to force
 model routing.
-
-## Installation
-
-Run in a terminal:
-
-```bash
-codex plugin marketplace add baranwang/goldilocks
-codex plugin add goldilocks@goldilocks
-```
-
-Use `/hooks` to review and trust the Goldilocks hook scripts, then start a new
-Codex task for the plugin to take effect.
 
 ## License
 
