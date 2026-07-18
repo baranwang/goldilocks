@@ -19,6 +19,7 @@ function escape_json(value, output, position, char) {
     if (char == "\\") output = output "\\\\"
     else if (char == "\"") output = output "\\\""
     else if (char == "\t") output = output "\\t"
+    else if (char ~ /[[:cntrl:]]/) invalid = 1
     else output = output char
   }
   return output
@@ -62,6 +63,7 @@ END {
     if (position > start) body = body "\\n"
     body = body escape_json(lines[position])
   }
+  if (invalid) exit 0
 
   printf "{\"hookSpecificOutput\":{\"hookEventName\":\"%s\",\"additionalContext\":\"%s\"}}", escape_json(event), body
 }

@@ -78,6 +78,11 @@ test('native scripts inject valid policy and reject malformed frontmatter', (t) 
     assert.equal(result.stdout, '');
     assert.equal(result.stderr, '');
   }
+
+  if (process.platform !== 'win32') {
+    fs.writeFileSync(path.join(tempRoot, 'skills', 'goldilocks', 'SKILL.md'), 'A\fB');
+    assert.equal(runNative('SessionStart', { PLUGIN_ROOT: tempRoot }).stdout, '');
+  }
 });
 
 test('configured hooks run both events and fail open silently', (t) => {
