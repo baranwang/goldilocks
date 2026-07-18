@@ -15,7 +15,8 @@ state.
 
 ## Constraints
 
-- Marketplace identity: `goldilocks@goldilocks`.
+- Marketplace name: `goldilocks`.
+- Codex installation identity: `goldilocks@goldilocks`.
 - The plugin slug remains `goldilocks`.
 - Keep the existing event matcher, timeout, status message, output envelope,
   workflow-invariance policy, and fail-open behavior.
@@ -33,7 +34,7 @@ state.
 
 ## Completed History
 
-Native hooks replaced the former JavaScript runtime in commit `ccab339`.
+Native hooks replaced the former JavaScript runtime in commit `8443a1d`.
 The final package manifest and local test harness were removed in
 `11bd78e`. The isolated installation verification was narrowed to marketplace
 add, plugin add, and enabled-status checks in `f661606`.
