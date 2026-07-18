@@ -8,7 +8,7 @@
       "name": "goldilocks",
       "source": {
         "source": "local",
-        "path": "./plugins/goldilocks"
+        "path": "./"
       },
       "policy": {
         "installation": "AVAILABLE",
