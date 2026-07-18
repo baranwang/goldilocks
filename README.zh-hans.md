@@ -20,6 +20,17 @@ Goldilocks 的灵感来自 [oh-my-openagent](https://github.com/code-yeongyu/oh-
 
 我目前主要使用 [Superpowers](https://github.com/obra/superpowers) 工作流，且希望保持原有节奏。Goldilocks 仅仅从中提取了一项核心能力：在工作流决定创建子代理时，为其分配最匹配的计算资源。这样既不破坏现有流程，又能避免让简单的任务占用昂贵的大模型，减少不必要的高成本子代理调用，帮助节省 Codex 订阅额度。
 
+## 安装
+
+在终端中运行：
+
+```bash
+codex plugin marketplace add baranwang/goldilocks
+codex plugin add goldilocks@goldilocks
+```
+
+通过 `/hooks` 命令检查并信任 Goldilocks 的 hook 脚本，然后新建一个 Codex 任务即可生效。
+
 ## 工作原理
 
 `SessionStart` 和 `SubagentStart` 钩子会注入一段来自 `skills/goldilocks/SKILL.md` 的精简策略。在执行已经计划好的 `spawn_agent` 调用前，当前代理会保留用户的显式指定，检查工具的 schema，判断子任务类型，最后仅修改受支持的 `model` 和 `reasoning_effort` 字段。
@@ -36,17 +47,6 @@ Goldilocks 的灵感来自 [oh-my-openagent](https://github.com/code-yeongyu/oh-
 
 Goldilocks 仅使用当前 `spawn_agent` schema 暴露的值，不预设固定的模型列表。用户的显式配置与原工作流的设定始终具有最高优先级。
 如果 `fork_turns` 未提供或设为了 `"all"`（导致引入完整历史上下文）且当前接口不支持覆盖计算参数，Goldilocks 会保持 `fork_turns` 不变并直接继承原配置。它绝不会为了强制路由模型而篡改上下文的切分逻辑。
-
-## 安装
-
-在终端中运行：
-
-```bash
-codex plugin marketplace add baranwang/goldilocks
-codex plugin add goldilocks@goldilocks
-```
-
-通过 `/hooks` 命令检查并信任 Goldilocks 的 hook 脚本，然后新建一个 Codex 任务即可生效。
 
 ## 许可证
 
