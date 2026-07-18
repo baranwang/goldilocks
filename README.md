@@ -48,6 +48,9 @@ task.
 
 ## Validation
 
+This repository has no package manifest or local test harness; it uses only
+the official validators below.
+
 ```bash
 python3 "$HOME/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py" plugins/goldilocks
 python3 "$HOME/.codex/skills/.system/skill-creator/scripts/quick_validate.py" plugins/goldilocks/skills/goldilocks
