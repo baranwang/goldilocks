@@ -14,8 +14,14 @@ The first version contains no classifier service, model catalog, MCP server, ins
 
 - Display name: `Goldilocks`
 - Plugin slug: `goldilocks`
+- npm package name: `@baranwang/goldilocks` (private development package)
 - Tagline: **Same workflow. Right-sized subagents.**
 - Chinese positioning: **工作流不变，子代理刚刚好。**
+
+The scoped npm package name is separate from the Codex installation identity.
+The package remains private to prevent accidental publication. The plugin is
+still installed as `goldilocks@goldilocks-router`; the plugin slug, marketplace
+qualifier, repository layout, and user workflow do not change.
 
 The name is intentionally retained despite another Codex workflow plugin using Goldilocks. This project is differentiated by its deliberately narrow scope: it is not a workflow replacement, process-depth router, or Superpowers alternative. Public distribution must use clear marketplace qualification, repository description, and the tagline above to reduce confusion.
 
