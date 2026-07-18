@@ -1,5 +1,4 @@
 {
-  "description": "Inject Goldilocks subagent sizing policy without changing workflow.",
   "hooks": {
     "SessionStart": [
       {

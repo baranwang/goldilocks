@@ -92,6 +92,7 @@ test('hooks.json registers only SessionStart and SubagentStart', () => {
   const hooks = JSON.parse(
     fs.readFileSync(path.join(root, 'plugins', 'goldilocks', 'hooks', 'hooks.json'), 'utf8'),
   );
+  assert.deepEqual(Object.keys(hooks), ['hooks']);
   assert.deepEqual(Object.keys(hooks.hooks).sort(), ['SessionStart', 'SubagentStart']);
   assert.equal(hooks.hooks.SessionStart[0].matcher, 'startup|resume|clear|compact');
   assert.match(hooks.hooks.SessionStart[0].hooks[0].command, /inject-router\.js" SessionStart$/);
