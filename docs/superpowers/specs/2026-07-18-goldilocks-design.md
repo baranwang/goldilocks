@@ -14,10 +14,15 @@ The first version contains no classifier service, model catalog, MCP server, ins
 
 - Display name: `Goldilocks`
 - Plugin slug: `goldilocks`
+- Marketplace name: `goldilocks`
+- Codex installation identity: `goldilocks@goldilocks`
 - Tagline: **Same workflow. Right-sized subagents.**
 - Chinese positioning: **工作流不变，子代理刚刚好。**
 
-The name is intentionally retained despite another Codex workflow plugin using Goldilocks. This project is differentiated by its deliberately narrow scope: it is not a workflow replacement, process-depth router, or Superpowers alternative. Public distribution must use clear marketplace qualification, repository description, and the tagline above to reduce confusion.
+The name is intentionally retained despite another Codex workflow plugin using
+Goldilocks. The user accepts the collision risk of using the unqualified
+marketplace name `goldilocks`; repository description and the tagline must make
+the deliberately narrow subagent-compute scope clear.
 
 ## Goals
 
@@ -46,6 +51,7 @@ The name is intentionally retained despite another Codex workflow plugin using G
 The design is based on current Codex behavior and the referenced projects:
 
 - Codex lifecycle hooks can inject additional developer context at `SessionStart` and `SubagentStart`. `SessionStart` context is thread-local, so subagents need their own injection when nested delegation is possible. See the official [Hooks documentation](https://learn.chatgpt.com/docs/hooks).
+- Only command hook handlers execute today. Codex supplies `PLUGIN_ROOT` to plugin hooks but does not guarantee Node.js or Python is installed, so runtime injection must use platform-native shells rather than an optional language runtime.
 - Codex supports custom subagent model and `model_reasoning_effort` settings. The exact models exposed to a `spawn_agent` call can vary, so the policy must inspect the current tool schema rather than assume every model slug is valid. See the official [Subagents documentation](https://learn.chatgpt.com/docs/agent-configuration/subagents).
 - Ponytail registers a real skill and uses lifecycle hooks to read the skill body and inject it automatically. Its always-on behavior does not depend on Codex deciding to invoke the skill. See [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail).
 - OmO/LazyCodex separates light exploration and implementation from high-difficulty reasoning. Its Codex agents use Luna for exploration and lower/medium workers, while the high worker uses Sol. Its broader category system is valuable as a routing reference, but its provider catalogs and role framework are intentionally out of scope. See [code-yeongyu/lazycodex](https://github.com/code-yeongyu/lazycodex) and [code-yeongyu/oh-my-openagent](https://github.com/code-yeongyu/oh-my-openagent).
@@ -61,7 +67,8 @@ goldilocks/
 │       └── SKILL.md
 └── hooks/
     ├── hooks.json
-    └── inject-router.js
+    ├── inject-router.sh
+    └── inject-router.ps1
 ```
 
 The plugin uses the default `hooks/hooks.json` discovery path. It does not need a manifest-level hooks entry.
@@ -92,22 +99,28 @@ The skill is registered normally so users can inspect or invoke it explicitly. A
 
 ### `hooks/hooks.json`
 
-The hook configuration registers the same zero-dependency script for:
+The hook configuration registers platform-native zero-dependency scripts for:
 
 - `SessionStart`, matching `startup|resume|clear|compact`;
 - `SubagentStart`, matching every subagent type.
 
-### `hooks/inject-router.js`
+### `hooks/inject-router.sh` and `hooks/inject-router.ps1`
 
-The script:
+The POSIX shell script serves macOS and Linux. The PowerShell script serves
+Windows. Each script:
 
-1. resolves the plugin root from `PLUGIN_ROOT`, with `CLAUDE_PLUGIN_ROOT` as a compatibility fallback;
+1. resolves the plugin root from the Codex-native `PLUGIN_ROOT` variable;
 2. reads `skills/goldilocks/SKILL.md`;
 3. strips YAML frontmatter;
 4. emits the body as `hookSpecificOutput.additionalContext` for the requested event;
 5. exits successfully without output if the policy file cannot be read or parsed.
 
-The script uses only Node.js standard-library modules. It does not access the network, transcripts, project files, or user configuration, and it writes no state.
+Goldilocks is Codex-only and intentionally does not support the
+`CLAUDE_PLUGIN_ROOT` compatibility alias. The runtime uses `/bin/sh` plus POSIX
+`awk` on macOS/Linux and PowerShell on Windows. It does not access the network,
+transcripts, project files, or user configuration, and it writes no state.
+Users do not need Node.js or Python for the installed runtime. Python is used
+only to run the official validators.
 
 ## Runtime Flow
 
@@ -216,33 +229,18 @@ Fail-open behavior is appropriate because routing is a cost optimization, not a 
 - Validate the skill structure with the skill validator.
 - Confirm the hook configuration references files inside the plugin root.
 
-### Unit tests
+### Repository validation
 
-Use Node's built-in test runner to cover:
+The repository intentionally has no package manifest or local test harness.
+Plugin and skill formats are validated by the official validators.
 
-- frontmatter removal;
-- `SessionStart` JSON output;
-- `SubagentStart` JSON output;
-- Unicode policy content;
-- missing or unreadable skill file fail-open behavior;
-- Unix and Windows plugin-root environment variables;
-- output size staying below the chosen context budget.
+### Isolated Codex installation verification
 
-The `SKILL.md` contract test must also confirm that the injected policy explicitly says routing begins only after the delegation decision and forbids changing workflow, task decomposition, task content, and subagent count.
-
-### Isolated Codex smoke test
-
-Install the local plugin into an isolated `CODEX_HOME` and verify:
-
-1. the plugin loads and its hooks can be reviewed and trusted;
-2. the router policy appears in root-thread context;
-3. the router policy appears in subagent context;
-4. representative `quick`, `explore`, `build`, `reason`, and `deep` tasks produce the expected `spawn_agent` parameters;
-5. `build` omits the model and uses `medium` effort;
-6. an explicit user model selection wins;
-7. Luna routes fall back when Luna is absent from the current spawn schema;
-8. disabling or breaking the hook does not block Codex.
-9. representative prompts do not cause Goldilocks to add, remove, or restructure subagent calls compared with the same workflow without Goldilocks; only supported model and reasoning fields may differ.
+In a fresh temporary `CODEX_HOME`, copy `auth.json` without reading or
+printing it, then add this repository as a marketplace, install
+`goldilocks@goldilocks`, and verify the installed entry is enabled. Use an
+unconditional cleanup trap to delete the temporary home and copied credentials.
+No Codex spawn session is required.
 
 ## Deferred Extensions
 

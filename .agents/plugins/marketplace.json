@@ -1,0 +1,20 @@
+{
+  "name": "goldilocks",
+  "interface": {
+    "displayName": "Goldilocks"
+  },
+  "plugins": [
+    {
+      "name": "goldilocks",
+      "source": {
+        "source": "local",
+        "path": "./plugins/goldilocks"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}
