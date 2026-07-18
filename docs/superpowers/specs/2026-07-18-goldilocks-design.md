@@ -234,14 +234,13 @@ Fail-open behavior is appropriate because routing is a cost optimization, not a 
 The repository intentionally has no package manifest or local test harness.
 Plugin and skill formats are validated by the official validators.
 
-### Isolated Codex smoke test
+### Isolated Codex installation verification
 
-Install the local plugin into an isolated `CODEX_HOME` and verify:
-
-1. the plugin loads and its hooks can be reviewed and trusted;
-2. a no-subagent prompt creates no `spawn_agent` event;
-3. an already-planned delegation creates exactly one child and completes;
-4. disabling or breaking either native script does not block Codex.
+In a fresh temporary `CODEX_HOME`, copy `auth.json` without reading or
+printing it, then add this repository as a marketplace, install
+`goldilocks@goldilocks`, and verify the installed entry is enabled. Use an
+unconditional cleanup trap to delete the temporary home and copied credentials.
+No Codex spawn session is required.
 
 ## Deferred Extensions
 
