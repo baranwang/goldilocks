@@ -1,0 +1,28 @@
+{
+  "name": "goldilocks",
+  "version": "0.1.0",
+  "description": "Same workflow. Right-sized subagents.",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "subagents",
+    "model-routing",
+    "reasoning-effort"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Goldilocks",
+    "shortDescription": "Right-size Codex subagents without changing workflow",
+    "longDescription": "Keeps the active workflow intact and guides agents to choose supported model and reasoning settings only when a subagent is already being spawned.",
+    "developerName": "Goldilocks contributors",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Instructions",
+      "Lifecycle hooks"
+    ],
+    "defaultPrompt": [
+      "Explain how Goldilocks routes an already-planned subagent."
+    ],
+    "brandColor": "#D4A72C"
+  }
+}
