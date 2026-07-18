@@ -33,7 +33,7 @@ When `fork_turns` is omitted or `"all"`, and the current tool definition disallo
 4. `reason`: root-cause diagnosis, correctness or security review, significant planning, or difficult edge cases.
 5. `deep`: architecture, migration, concurrency, cross-module restructuring, substantial ambiguity, or long autonomous exploration.
 
-Choose the lowest sufficient route. File count alone does not determine difficulty. Security, authorization, privacy, money, or data-loss risk requires at least `reason`. Concurrency, migrations, public API compatibility, irreversible operations, or new cross-module boundaries require at least `reason`; use `deep` for architecture or cross-module redesign. Upgrade after a failed attempt only when the failure reveals greater reasoning complexity. Resolve adjacent routes downward for low-risk work and upward when failure cost is high.
+Choose the lowest sufficient route. File count alone does not determine difficulty. Security, authorization, privacy, money, or data-loss risk requires at least `reason`. Concurrency, migrations, public API compatibility, and irreversible operations require at least `reason`. New cross-module boundaries or abstractions use `deep`. Upgrade after a failed attempt only when the failure reveals greater reasoning complexity. Resolve adjacent routes downward for low-risk work and upward when failure cost is high.
 
 ## Route table
 
