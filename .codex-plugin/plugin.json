@@ -3,8 +3,11 @@
   "version": "0.1.0",
   "description": "Same workflow. Right-sized subagents.",
   "author": {
-    "name": "Goldilocks contributors"
+    "name": "Baran Wang",
+    "url": "https://github.com/baranwang"
   },
+  "homepage": "https://github.com/baranwang/goldilocks",
+  "repository": "https://github.com/baranwang/goldilocks",
   "license": "MIT",
   "keywords": [
     "codex",
@@ -17,12 +20,13 @@
     "displayName": "Goldilocks",
     "shortDescription": "Right-size Codex subagents without changing workflow",
     "longDescription": "Keeps the active workflow intact and guides agents to choose supported model and reasoning settings only when a subagent is already being spawned.",
-    "developerName": "Goldilocks contributors",
+    "developerName": "Baran Wang",
     "category": "Developer Tools",
     "capabilities": [
       "Instructions",
       "Lifecycle hooks"
     ],
+    "websiteURL": "https://github.com/baranwang/goldilocks",
     "defaultPrompt": [
       "Explain how Goldilocks routes an already-planned subagent."
     ],
