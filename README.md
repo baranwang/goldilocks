@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="Goldilocks logo" width="180">
+  <img src="assets/logo.webp" alt="Goldilocks logo" width="192">
 </p>
 
 <p align="center">

@@ -26,6 +26,7 @@
     "defaultPrompt": [
       "Explain how Goldilocks routes an already-planned subagent."
     ],
-    "brandColor": "#D4A72C"
+    "brandColor": "#D4A72C",
+    "logo": "./assets/logo.webp"
   }
 }
