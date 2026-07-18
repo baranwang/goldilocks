@@ -6,8 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "root=\"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}\"; if [ -n \"$root\" ] && command -v node >/dev/null 2>&1 && [ -f \"$root/hooks/inject-router.js\" ]; then output=\"$(node \"$root/hooks/inject-router.js\" SessionStart 2>/dev/null)\" && [ -n \"$output\" ] && printf '%s' \"$output\"; fi; exit 0",
-            "commandWindows": "$root = if ($env:PLUGIN_ROOT) { $env:PLUGIN_ROOT } else { $env:CLAUDE_PLUGIN_ROOT }; if ($root -and (Get-Command node -ErrorAction SilentlyContinue)) { try { $script = Join-Path $root 'hooks\\inject-router.js'; if (Test-Path -LiteralPath $script -PathType Leaf -ErrorAction SilentlyContinue) { $output = & node $script SessionStart 2>$null; if ($LASTEXITCODE -eq 0 -and $null -ne $output) { [Console]::Out.Write(($output -join [Environment]::NewLine)) } } } catch {} }; exit 0",
+            "command": "root=\"${PLUGIN_ROOT:-}\"; if [ -n \"$root\" ] && [ -r \"$root/hooks/inject-router.sh\" ]; then output=$(/bin/sh \"$root/hooks/inject-router.sh\" SessionStart 2>/dev/null) && [ -n \"$output\" ] && printf '%s' \"$output\"; fi; exit 0",
+            "commandWindows": "$root=$env:PLUGIN_ROOT; if ($root) { $script=Join-Path $root 'hooks\\inject-router.ps1'; $powershell=Get-Command powershell.exe -ErrorAction SilentlyContinue; if ($powershell -and (Test-Path -LiteralPath $script -PathType Leaf)) { try { $output=& $powershell.Source -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script SessionStart 2>$null; if ($LASTEXITCODE -eq 0 -and $output) { [Console]::Out.Write(($output -join [Environment]::NewLine)) } } catch {} } }; exit 0",
             "timeout": 5,
             "statusMessage": "Loading Goldilocks routing..."
           }
@@ -19,8 +19,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "root=\"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}\"; if [ -n \"$root\" ] && command -v node >/dev/null 2>&1 && [ -f \"$root/hooks/inject-router.js\" ]; then output=\"$(node \"$root/hooks/inject-router.js\" SubagentStart 2>/dev/null)\" && [ -n \"$output\" ] && printf '%s' \"$output\"; fi; exit 0",
-            "commandWindows": "$root = if ($env:PLUGIN_ROOT) { $env:PLUGIN_ROOT } else { $env:CLAUDE_PLUGIN_ROOT }; if ($root -and (Get-Command node -ErrorAction SilentlyContinue)) { try { $script = Join-Path $root 'hooks\\inject-router.js'; if (Test-Path -LiteralPath $script -PathType Leaf -ErrorAction SilentlyContinue) { $output = & node $script SubagentStart 2>$null; if ($LASTEXITCODE -eq 0 -and $null -ne $output) { [Console]::Out.Write(($output -join [Environment]::NewLine)) } } } catch {} }; exit 0",
+            "command": "root=\"${PLUGIN_ROOT:-}\"; if [ -n \"$root\" ] && [ -r \"$root/hooks/inject-router.sh\" ]; then output=$(/bin/sh \"$root/hooks/inject-router.sh\" SubagentStart 2>/dev/null) && [ -n \"$output\" ] && printf '%s' \"$output\"; fi; exit 0",
+            "commandWindows": "$root=$env:PLUGIN_ROOT; if ($root) { $script=Join-Path $root 'hooks\\inject-router.ps1'; $powershell=Get-Command powershell.exe -ErrorAction SilentlyContinue; if ($powershell -and (Test-Path -LiteralPath $script -PathType Leaf)) { try { $output=& $powershell.Source -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script SubagentStart 2>$null; if ($LASTEXITCODE -eq 0 -and $output) { [Console]::Out.Write(($output -join [Environment]::NewLine)) } } catch {} } }; exit 0",
             "timeout": 5,
             "statusMessage": "Loading Goldilocks routing..."
           }
