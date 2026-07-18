@@ -496,19 +496,16 @@ if (!noSpawn.some((event) => event.item?.type === "agent_message" && event.item?
 if (completedSpawns(noSpawn).length !== 0) process.exit(1);
 const spawns = completedSpawns(oneSpawn);
 if (spawns.length !== 1) process.exit(1);
-const receiver = spawns[0].item.receiver;
-const receiverCount = Array.isArray(receiver) ? receiver.length : receiver ? 1 : 0;
-if (receiverCount !== 1) process.exit(1);
 NODE
 '
 ```
 
-Expected: marketplace name is `goldilocks`; installed/enabled identity is `goldilocks@goldilocks`; no-spawn count is `0`; one-spawn count and receiver count are `1`; the temporary home and copied auth are deleted without being read or printed.
+Expected: marketplace name is `goldilocks`; installed/enabled identity is `goldilocks@goldilocks`; no-spawn count is `0`; one-spawn completed count is `1`; the temporary home and copied auth are deleted without being read or printed. Current Codex CLI JSONL does not expose a receiver field on completed `spawn_agent` calls.
 
 - [ ] **Step 6: Commit identity and test diet**
 
 ```bash
-rtk git add .agents/plugins/marketplace.json package.json README.md tests
+rtk git add .agents/plugins/marketplace.json package.json README.md tests docs/superpowers/plans/2026-07-18-native-runtime-and-test-diet.md
 rtk git commit -m "chore: simplify Goldilocks packaging and tests"
 rtk git status --short --branch
 ```

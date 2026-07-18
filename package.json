@@ -1,5 +1,5 @@
 {
-  "name": "goldilocks-codex-router",
+  "name": "@baranwang/goldilocks",
   "version": "0.1.0",
   "private": true,
   "description": "Same workflow. Right-sized Codex subagents.",

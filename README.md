@@ -40,7 +40,7 @@ From this repository:
 
 ```bash
 codex plugin marketplace add ./
-codex plugin add goldilocks@goldilocks-router
+codex plugin add goldilocks@goldilocks
 ```
 
 Open `/hooks`, review and trust the Goldilocks hooks, then start a new Codex
@@ -54,8 +54,9 @@ python3 "$HOME/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py" 
 python3 "$HOME/.codex/skills/.system/skill-creator/scripts/quick_validate.py" plugins/goldilocks/skills/goldilocks
 ```
 
-Runtime code uses only the Node.js standard library and does not access the
-network or write state.
+The installed runtime uses POSIX `sh`/`awk` on macOS and Linux, and PowerShell
+on Windows. Users do not need Node.js or Python. Node.js is only needed by
+contributors who run `npm test`.
 
 ## Name
 
