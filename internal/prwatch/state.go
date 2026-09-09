@@ -20,7 +20,7 @@ const prURLHelp = "use an HTTPS PR URL: https://HOST/OWNER/REPO/pull/NUMBER"
 
 func ParsePR(raw string) (PR, error) {
 	parsed, err := url.Parse(raw)
-	if err != nil || strings.Contains(raw, "%") || parsed.Scheme != "https" ||
+	if err != nil || escapedIdentityPath(raw) || parsed.Scheme != "https" ||
 		parsed.Hostname() == "" || parsed.User != nil || hasExplicitPort(parsed.Host) {
 		return PR{}, errors.New(prURLHelp)
 	}
@@ -44,6 +44,18 @@ func ParsePR(raw string) (PR, error) {
 		URL: canonical, Host: host, Owner: parts[1], Repo: parts[2], Number: parts[4],
 		Key: fmt.Sprintf("%x", sum)[:16],
 	}, nil
+}
+
+func escapedIdentityPath(raw string) bool {
+	if end := strings.IndexAny(raw, "?#"); end >= 0 {
+		raw = raw[:end]
+	}
+	authority := strings.Index(raw, "://")
+	if authority < 0 {
+		return false
+	}
+	path := strings.IndexByte(raw[authority+3:], '/')
+	return path >= 0 && strings.Contains(raw[authority+3+path:], "%")
 }
 
 func hasExplicitPort(host string) bool {
@@ -494,6 +506,9 @@ func (s *Store) PendingEvent() (json.RawMessage, error) {
 }
 
 func (s *Store) Stage(kind string, snapshot Snapshot, changes Changes, failure *string, observations []Observation, at time.Time) (json.RawMessage, error) {
+	if len(s.Data.Pending) != 0 && !isNull(s.Data.Pending) {
+		return s.PendingEvent()
+	}
 	if kind == "" {
 		return nil, errors.New("event type is required")
 	}

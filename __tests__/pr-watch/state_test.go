@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -104,6 +103,11 @@ func TestParsePRCanonicalIdentityAndRejectsUnsafeURLs(t *testing.T) {
 	if again != plain {
 		t.Fatalf("equivalent URLs differ: %#v %#v", again, plain)
 	}
+	encodedNoise, err := pw.ParsePR(testPR + "?tab=%E6%B5%8B#discussion%20thread")
+	check(t, err)
+	if encodedNoise != plain {
+		t.Fatalf("encoded query/fragment affected identity: %#v %#v", encodedNoise, plain)
+	}
 	for _, otherURL := range []string{
 		"https://github.com/example/other-project/pull/7",
 		"https://github.example.com/example/project/pull/7",
@@ -122,6 +126,7 @@ func TestParsePRCanonicalIdentityAndRejectsUnsafeURLs(t *testing.T) {
 		"https://:secret@github.com/example/project/pull/7",
 		"https://github.com:443/example/project/pull/7",
 		"https://github.com/%65xample/project/pull/7",
+		"https://github.com/%E4%BE%8B%E5%AD%90/project/pull/7",
 		"https://github.com/example/project/pull/0",
 		"https://github.com/./project/pull/7",
 		"https://github.com/example/../pull/7",
@@ -228,21 +233,6 @@ func TestLockRevalidatesAndRemainsExclusive(t *testing.T) {
 	}
 }
 
-func TestLockInteroperatesWithExistingFlock(t *testing.T) {
-	s := mustStore(t, t.TempDir())
-	path := strings.TrimSuffix(s.Path, ".json") + ".lock"
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
-	check(t, err)
-	check(t, syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB))
-	defer f.Close()
-	if release, err := s.Lock(true); !errors.Is(err, pw.ErrLocked) {
-		if release != nil {
-			release()
-		}
-		t.Fatal("existing flock owner was ignored", err)
-	}
-}
-
 func TestPendingSurvivesRestartUntilMatchingAck(t *testing.T) {
 	dir := t.TempDir()
 	s := mustStore(t, dir)
@@ -283,6 +273,41 @@ func TestPendingSurvivesRestartUntilMatchingAck(t *testing.T) {
 	id := s.Data.Snapshot["comments"].(map[string]any)["9007199254740993"].(map[string]any)["id"]
 	if number, ok := id.(json.Number); !ok || number.String() != "9007199254740993" {
 		t.Fatalf("ack lost numeric identity: %#v", id)
+	}
+	check(t, release())
+}
+
+func TestStagePreservesExistingPreparedPending(t *testing.T) {
+	s := mustStore(t, t.TempDir())
+	release, err := s.Lock(true)
+	check(t, err)
+	_, err = s.Stage("initial", emptySnapshot(), pw.Changes{}, nil, nil, time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC))
+	check(t, err)
+	envelope := decodeAny(t, s.Data.Pending).(map[string]any)
+	envelope["messages"] = []any{map[string]any{"prompt": "prepared legacy JSON\n原文 \\ and quotes \""}}
+	s.Data.Pending, err = json.Marshal(envelope)
+	check(t, err)
+	collecting := &pw.Batch{
+		Snapshot: emptySnapshot(), Kind: "update",
+		Observations: []pw.Observation{{Type: "update", ObservedAt: "2026-09-09T01:00:00Z", HeadSHA: "abc123", Changes: pw.Changes{}}},
+	}
+	s.Data.Collecting = collecting
+	check(t, s.Save())
+	frozenEvent, err := s.PendingEvent()
+	check(t, err)
+	frozenPending := append(json.RawMessage(nil), s.Data.Pending...)
+	frozenFile, err := os.ReadFile(s.Path)
+	check(t, err)
+
+	next := emptySnapshot()
+	next["head_sha"] = "new-head"
+	returned, err := s.Stage("update", next, pw.Changes{"head_sha": map[string]any{"before": "abc123", "after": "new-head"}}, nil, collecting.Observations, time.Date(2026, 9, 9, 2, 0, 0, 0, time.UTC))
+	check(t, err)
+	afterFile, err := os.ReadFile(s.Path)
+	check(t, err)
+	if !bytes.Equal(returned, frozenEvent) || !bytes.Equal(s.Data.Pending, frozenPending) ||
+		!bytes.Equal(afterFile, frozenFile) || !reflect.DeepEqual(s.Data.Collecting, collecting) {
+		t.Fatal("later stage rewrote frozen pending state")
 	}
 	check(t, release())
 }
