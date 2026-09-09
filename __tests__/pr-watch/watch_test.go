@@ -76,6 +76,98 @@ func observedCommentBodies(t *testing.T, observations []pw.Observation) []string
 	return bodies
 }
 
+func TestInitialReportsExistingBlockersAndGreenOpenDoesNotStop(t *testing.T) {
+	s := mustStore(t, t.TempDir())
+	release, err := s.Lock(true)
+	check(t, err)
+	defer release()
+	c := newClock()
+	blockers := emptySnapshot()
+	blockers["checks"] = []any{map[string]any{
+		"name": "tests", "status": "COMPLETED", "conclusion": "FAILURE", "url": testPR,
+	}}
+	blockers["comments"] = map[string]any{"old": map[string]any{"body": "baseline history", "url": testPR}}
+	blockers["reviews"] = map[string]any{"17": map[string]any{
+		"id": "17", "author": "reviewer", "state": "CHANGES_REQUESTED", "body": "fix this", "url": testPR,
+		"submitted_at": "2026-09-09T00:00:00Z",
+	}}
+	blockers["threads"] = map[string]any{"T1": map[string]any{
+		"outdated": false,
+		"comments": []any{map[string]any{"id": "reply-1", "author": "reviewer", "body": "unresolved", "url": testPR}},
+	}}
+
+	initialReads := 0
+	raw, err := pw.Watch(context.Background(), s, pw.Options{Interval: time.Second, Quiet: 2 * time.Second}, pw.Dependencies{
+		Read: func(context.Context, pw.PR, func() bool) (pw.Snapshot, error) {
+			initialReads++
+			return blockers, nil
+		},
+		Now: c.Now, Wait: c.Wait,
+	})
+	check(t, err)
+	initial := eventFrom(t, raw)
+	checks := initial.Changes["checks"].(map[string]any)["after"].([]any)
+	reviews := initial.Changes["reviews"].(map[string]any)
+	threads := initial.Changes["threads"].(map[string]any)
+	if initialReads != 1 || c.Seconds() != 0 || initial.Type != "initial" ||
+		checks[0].(map[string]any)["conclusion"] != "FAILURE" ||
+		reviews["17"].(map[string]any)["state"] != "CHANGES_REQUESTED" ||
+		threads["T1"].(map[string]any)["comments"].([]any)[0].(map[string]any)["body"] != "unresolved" ||
+		initial.Changes["comments"] != nil || s.Data.Finished {
+		t.Fatal(initialReads, c.Seconds(), initial, s.Data)
+	}
+	check(t, s.Ack(initial.EventID))
+
+	green := emptySnapshot()
+	green["checks"] = []any{map[string]any{
+		"name": "tests", "status": "COMPLETED", "conclusion": "SUCCESS", "url": testPR,
+	}}
+	var greenStarts []int
+	raw, err = pw.Watch(context.Background(), s, pw.Options{Interval: time.Second, Quiet: 2 * time.Second}, pw.Dependencies{
+		Read: func(context.Context, pw.PR, func() bool) (pw.Snapshot, error) {
+			greenStarts = append(greenStarts, c.Seconds())
+			return green, nil
+		},
+		Now: c.Now, Wait: c.Wait,
+	})
+	check(t, err)
+	update := eventFrom(t, raw)
+	greenChecks := update.Changes["checks"].(map[string]any)["after"].([]any)
+	if !reflect.DeepEqual(greenStarts, []int{0, 1, 2}) || update.Type != "update" ||
+		greenChecks[0].(map[string]any)["conclusion"] != "SUCCESS" || s.Data.Finished {
+		t.Fatal(greenStarts, update, s.Data)
+	}
+	check(t, s.Ack(update.EventID))
+	if s.Data.Finished || s.Data.Snapshot["state"] != "OPEN" {
+		t.Fatal(s.Data)
+	}
+
+	stopAt := c.Seconds() + 5
+	var steadyStarts []int
+	wait := func(ctx context.Context, d time.Duration) error {
+		if err := c.Wait(ctx, d); err != nil {
+			return err
+		}
+		if c.Seconds() == stopAt {
+			return os.WriteFile(s.StopPath, []byte("stop\n"), 0600)
+		}
+		return nil
+	}
+	raw, err = pw.Watch(context.Background(), s, pw.Options{Interval: time.Second, Quiet: 2 * time.Second}, pw.Dependencies{
+		Read: func(context.Context, pw.PR, func() bool) (pw.Snapshot, error) {
+			steadyStarts = append(steadyStarts, c.Seconds())
+			return green, nil
+		},
+		Now: c.Now, Wait: wait,
+	})
+	check(t, err)
+	stopped := eventFrom(t, raw)
+	if stopped.Type != "stopped" || c.Seconds() != stopAt ||
+		!reflect.DeepEqual(steadyStarts, []int{2, 3, 4, 5, 6}) || s.Data.Finished {
+		t.Fatal(steadyStarts, stopped, s.Data)
+	}
+}
+
 func TestQuietResetsAtZeroSixTwelve(t *testing.T) {
 	s := mustStore(t, t.TempDir())
 	release, err := s.Lock(true)
