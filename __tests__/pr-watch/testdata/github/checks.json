@@ -1,0 +1,1 @@
+[{"check_runs":[{"name":"tests","status":"completed","conclusion":"failure","html_url":"https://github.com/example/project/pull/7#check1"}]},{"check_runs":[{"name":"lint","status":"completed","conclusion":"success","html_url":"https://github.com/example/project/pull/7#check2"}]}]
