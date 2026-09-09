@@ -8,7 +8,7 @@ esac
 
 root=${PLUGIN_ROOT-}
 [ -n "$root" ] || exit 0
-skill=$root/skills/goldilocks/SKILL.md
+skill=$root/skills/model-routing/SKILL.md
 [ -r "$skill" ] || exit 0
 
 LC_ALL=C awk -v event="$event" '

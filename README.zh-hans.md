@@ -33,7 +33,7 @@ codex plugin add goldilocks@goldilocks
 
 ## 工作原理
 
-`SessionStart` 和 `SubagentStart` 钩子会注入一段来自 `skills/goldilocks/SKILL.md` 的精简策略。在执行已经计划好的 `spawn_agent` 调用前，当前代理会保留用户的显式指定，检查工具的 schema，判断子任务类型，最后仅修改受支持的 `model` 和 `reasoning_effort` 字段。
+`SessionStart` 和 `SubagentStart` 钩子会注入一段来自 `skills/model-routing/SKILL.md` 的精简策略。在执行已经计划好的 `spawn_agent` 调用前，当前代理会保留用户的显式指定，检查工具的 schema，判断子任务类型，最后仅修改受支持的 `model` 和 `reasoning_effort` 字段。
 
 运行时依赖极简：macOS 和 Linux 环境下直接使用原生的 POSIX `sh`/`awk`，Windows 下使用 PowerShell，完全不需要安装 Node.js 或 Python。
 

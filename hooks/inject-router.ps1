@@ -8,7 +8,7 @@ try {
   $root = $env:PLUGIN_ROOT
   if ([string]::IsNullOrWhiteSpace($root)) { exit 0 }
 
-  $skillPath = Join-Path $root 'skills\goldilocks\SKILL.md'
+  $skillPath = Join-Path $root 'skills\model-routing\SKILL.md'
   if (-not (Test-Path -LiteralPath $skillPath -PathType Leaf)) { exit 0 }
 
   $raw = [IO.File]::ReadAllText($skillPath)

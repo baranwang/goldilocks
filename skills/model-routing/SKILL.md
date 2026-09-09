@@ -1,9 +1,9 @@
 ---
-name: goldilocks
+name: model-routing
 description: Use when Codex is about to call spawn_agent or inspect Goldilocks routing. Right-sizes model and reasoning effort only for subagents the active workflow has already decided to spawn. Never changes workflow, delegation, task content, or subagent count.
 ---
 
-# Goldilocks
+# Model Routing
 
 Same workflow. Right-sized subagents.
 

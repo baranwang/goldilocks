@@ -48,7 +48,7 @@ Codex task for the plugin to take effect.
 ## How it works
 
 `SessionStart` and `SubagentStart` hooks inject a compact policy from
-`skills/goldilocks/SKILL.md`. Before an already-planned `spawn_agent` call, the
+`skills/model-routing/SKILL.md`. Before an already-planned `spawn_agent` call, the
 current agent preserves explicit user choices, checks the tool schema,
 classifies the child task, and changes only supported `model` and
 `reasoning_effort` fields.
