@@ -93,7 +93,7 @@ func main(){
 		cmd := exec.CommandContext(ctx, "sh", filepath.Join(root, "scripts/goldilocks.sh"), "a b", `quote"and\slash`, "", "trailing\\")
 		if runtime.GOOS == "windows" {
 			script := strings.ReplaceAll(filepath.Join(root, "scripts/goldilocks.ps1"), "'", "''")
-			cmd = exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "& '"+script+`' 'a b' 'quote"and\slash' '' 'trailing\'`)
+			cmd = exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "& '"+script+`' 'a b' 'quote"and\slash' '' 'trailing\'; exit $LASTEXITCODE`)
 		}
 		cmd.Dir = t.TempDir()
 		cmd.Env = append(os.Environ(), "PATH="+fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"), "PLUGIN_DATA="+cache, "PROBE="+probePath, "DOWNLOAD_LOG="+downloadLog, "FAIL_DOWNLOAD=")

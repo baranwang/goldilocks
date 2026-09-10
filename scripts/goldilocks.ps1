@@ -45,7 +45,7 @@ try {
                     & curl.exe --fail --location --silent --show-error --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 60 --output $temporary "https://github.com/baranwang/goldilocks/releases/download/v$version/$asset"
                     if ($LASTEXITCODE -ne 0) { throw "download failed for v$version/$asset; retry when the release and network are available" }
                     if ((Get-Digest $temporary) -ne $expected) { throw "SHA-256 mismatch for $asset" }
-                    if (Test-Path -LiteralPath $binary) { [IO.File]::Replace($temporary, $binary, $null) }
+                    if (Test-Path -LiteralPath $binary) { [IO.File]::Replace($temporary, $binary, [NullString]::Value) }
                     else { [IO.File]::Move($temporary, $binary) }
                 } finally { if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force } }
             }

@@ -7,7 +7,7 @@
           {
             "type": "command",
             "command": "\"${PLUGIN_ROOT}/scripts/goldilocks.sh\" hook",
-            "commandWindows": "& \"$env:PLUGIN_ROOT/scripts/goldilocks.ps1\" hook",
+            "commandWindows": "& \"$env:PLUGIN_ROOT/scripts/goldilocks.ps1\" hook; exit $LASTEXITCODE",
             "timeout": 150,
             "statusMessage": "Loading Goldilocks"
           }
@@ -20,7 +20,7 @@
           {
             "type": "command",
             "command": "\"${PLUGIN_ROOT}/scripts/goldilocks.sh\" hook",
-            "commandWindows": "& \"$env:PLUGIN_ROOT/scripts/goldilocks.ps1\" hook",
+            "commandWindows": "& \"$env:PLUGIN_ROOT/scripts/goldilocks.ps1\" hook; exit $LASTEXITCODE",
             "timeout": 150,
             "statusMessage": "Loading Goldilocks"
           }
@@ -33,7 +33,7 @@
           {
             "type": "command",
             "command": "\"${PLUGIN_ROOT}/scripts/goldilocks.sh\" hook",
-            "commandWindows": "& \"$env:PLUGIN_ROOT/scripts/goldilocks.ps1\" hook",
+            "commandWindows": "& \"$env:PLUGIN_ROOT/scripts/goldilocks.ps1\" hook; exit $LASTEXITCODE",
             "timeout": 150,
             "statusMessage": "Loading Goldilocks"
           }

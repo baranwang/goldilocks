@@ -110,8 +110,8 @@ checksum update alongside any Go source or plugin-version change. CI rebuilds
 and rejects a mismatch with the committed checksums.
 
 After validation, push a tag matching the plugin version (for example,
-`v0.2.0`). The Release workflow builds and verifies the pinned assets before
-publishing six executables and SHA256SUMS to GitHub Releases. Publish those
+`v0.2.0`). The Release workflow waits for the Linux, macOS, and Windows checks, then
+verifies the pinned assets before publishing six executables and SHA256SUMS to GitHub Releases. Publish those
 assets before distributing the matching plugin version. Releases must remain
 available and immutable for that plugin version; there is no `latest` fallback.
 
