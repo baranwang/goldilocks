@@ -31,12 +31,16 @@ codex plugin add goldilocks@goldilocks
 
 审阅并信任已安装 hooks，再使用加载了该版本的任务。通过 `/hooks` 检查 hook 定义。
 
+启动脚本在首次运行时从 GitHub Releases 下载与插件版本、系统和架构匹配的 Go 二进制，使用随插件保存的 `scripts/SHA256SUMS` 校验后缓存到 `PLUGIN_DATA`。后续直接执行已校验的缓存。普通 CLI 调用未提供该变量时，macOS/Linux 使用 `${XDG_CACHE_HOME:-$HOME/.cache}/goldilocks`，Windows 使用 `%LOCALAPPDATA%/goldilocks`。
+
+无需安装 Node、Python 或 Go。首次运行需要联网访问 GitHub Releases 和 curl（现代 Windows 使用 curl.exe），macOS/Linux 还使用 sha256sum 或 shasum。下载或校验失败会明确报错，可在版本发布、网络恢复后重试。Hook 超时调整为 150 秒以容纳首次下载；修改后的 hooks 需要重新审阅和信任。
+
 ## 工作原理
 
 `SessionStart` 和 `SubagentStart` 钩子会注入一段来自 `skills/model-routing/SKILL.md` 的精简策略。在执行已经计划好的 `spawn_agent` 调用前，当前代理会保留用户的显式指定，检查工具的 schema，判断子任务类型，最后仅修改受支持的 `model` 和 `reasoning_effort` 字段。
 
-一个随包 Go CLI 提供 hooks、PR 监听和 watcher 登记。
-无需安装 Python 或 Go；在线 PR 读取使用已登录的 gh。
+一个 Go CLI 提供 hooks、PR 监听和 watcher 登记。
+在线 PR 读取使用已登录的 gh。
 新变化默认在观察到 30 秒静默后合批投递。
 本版 PR 监听支持 macOS/Linux；Windows 支持 hooks。
 

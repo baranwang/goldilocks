@@ -6,9 +6,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${PLUGIN_ROOT}/bin/$(uname -s)-$(uname -m)/goldilocks\" hook",
-            "commandWindows": "& \"$env:PLUGIN_ROOT/bin/Windows-$(if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE })/goldilocks.exe\" hook",
-            "timeout": 5,
+            "command": "\"${PLUGIN_ROOT}/scripts/goldilocks.sh\" hook",
+            "commandWindows": "& \"$env:PLUGIN_ROOT/scripts/goldilocks.ps1\" hook",
+            "timeout": 150,
             "statusMessage": "Loading Goldilocks"
           }
         ]
@@ -19,9 +19,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${PLUGIN_ROOT}/bin/$(uname -s)-$(uname -m)/goldilocks\" hook",
-            "commandWindows": "& \"$env:PLUGIN_ROOT/bin/Windows-$(if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE })/goldilocks.exe\" hook",
-            "timeout": 5,
+            "command": "\"${PLUGIN_ROOT}/scripts/goldilocks.sh\" hook",
+            "commandWindows": "& \"$env:PLUGIN_ROOT/scripts/goldilocks.ps1\" hook",
+            "timeout": 150,
             "statusMessage": "Loading Goldilocks"
           }
         ]
@@ -32,9 +32,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${PLUGIN_ROOT}/bin/$(uname -s)-$(uname -m)/goldilocks\" hook",
-            "commandWindows": "& \"$env:PLUGIN_ROOT/bin/Windows-$(if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE })/goldilocks.exe\" hook",
-            "timeout": 5,
+            "command": "\"${PLUGIN_ROOT}/scripts/goldilocks.sh\" hook",
+            "commandWindows": "& \"$env:PLUGIN_ROOT/scripts/goldilocks.ps1\" hook",
+            "timeout": 150,
             "statusMessage": "Loading Goldilocks"
           }
         ]

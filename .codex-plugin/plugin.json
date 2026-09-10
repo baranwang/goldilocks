@@ -20,7 +20,7 @@
   "interface": {
     "displayName": "Goldilocks",
     "shortDescription": "Right-size subagents and monitor PR CI, comments, and reviews",
-    "longDescription": "Preserves existing workflows while routing already-planned subagents, and delegates PR monitoring, evidence delivery, and watcher lifecycle registration through one bundled Go CLI.",
+    "longDescription": "Preserves existing workflows while routing already-planned subagents, and delegates PR monitoring, evidence delivery, and watcher lifecycle registration through one Go CLI downloaded on first use.",
     "developerName": "Baran Wang",
     "category": "Developer Tools",
     "capabilities": [

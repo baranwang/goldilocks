@@ -1,4 +1,4 @@
-// Build and verify the bundled CLI. Run from the repository root.
+// Build and verify CLI release assets. Run from the repository root.
 package main
 
 import (
@@ -91,7 +91,7 @@ func build(version string) error {
 		if err != nil {
 			return err
 		}
-		path := filepath.Join("bin", t.Dir, t.Name)
+		path := filepath.Join("bin", "goldilocks-"+t.Dir+strings.TrimPrefix(t.Name, "goldilocks"))
 		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 			return err
 		}
@@ -102,16 +102,20 @@ func build(version string) error {
 			return err
 		}
 		digest := sha256.Sum256(data)
-		sums = append(sums, fmt.Sprintf("%x  %s/%s", digest, t.Dir, t.Name))
+		sums = append(sums, fmt.Sprintf("%x  %s", digest, filepath.Base(path)))
 	}
 	sort.Strings(sums)
-	return os.WriteFile("bin/SHA256SUMS", []byte(strings.Join(sums, "\n")+"\n"), 0644)
+	manifest := []byte(strings.Join(sums, "\n") + "\n")
+	if err := os.WriteFile("bin/SHA256SUMS", manifest, 0644); err != nil {
+		return err
+	}
+	return os.WriteFile("scripts/SHA256SUMS", manifest, 0644)
 }
 
 func check() error {
 	var sums []string
 	for _, t := range targets {
-		path := filepath.Join("bin", t.Dir, t.Name)
+		path := filepath.Join("bin", "goldilocks-"+t.Dir+strings.TrimPrefix(t.Name, "goldilocks"))
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
@@ -127,17 +131,17 @@ func check() error {
 			return fmt.Errorf("invalid %s executable format: %s", t.OS, path)
 		}
 		digest := sha256.Sum256(data)
-		sums = append(sums, fmt.Sprintf("%x  %s/%s", digest, t.Dir, t.Name))
+		sums = append(sums, fmt.Sprintf("%x  %s", digest, filepath.Base(path)))
 	}
 	sort.Strings(sums)
-	actual, err := os.ReadFile("bin/SHA256SUMS")
+	actual, err := os.ReadFile("scripts/SHA256SUMS")
 	if err != nil {
 		return err
 	}
 	if !bytes.Equal(actual, []byte(strings.Join(sums, "\n")+"\n")) {
-		return errors.New("bin/SHA256SUMS mismatch")
+		return errors.New("scripts/SHA256SUMS mismatch")
 	}
-	fmt.Println("verified six bundled executable formats and SHA256SUMS")
+	fmt.Println("verified six release executable formats and SHA256SUMS")
 	return nil
 }
 
@@ -152,13 +156,18 @@ func smoke(t target, version string) error {
 	if err != nil {
 		return err
 	}
-	binary := filepath.Join(root, "bin", t.Dir, t.Name)
-	for _, path := range []string{filepath.Join("bin", t.Dir, t.Name), filepath.Join("skills", "model-routing", "SKILL.md")} {
+	dataDir := filepath.Join(root, "data")
+	binary := filepath.Join(dataDir, "bin", version, t.Dir, t.Name)
+	asset := filepath.Join("bin", "goldilocks-"+t.Dir+strings.TrimPrefix(t.Name, "goldilocks"))
+	for _, path := range []string{asset, "scripts/goldilocks.sh", "scripts/goldilocks.ps1", "scripts/SHA256SUMS", ".codex-plugin/plugin.json", filepath.Join("skills", "model-routing", "SKILL.md")} {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
 		destination := filepath.Join(root, path)
+		if path == asset {
+			destination = binary
+		}
 		if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
 			return err
 		}
@@ -177,7 +186,7 @@ func smoke(t target, version string) error {
 		return err
 	}
 	if strings.TrimSpace(string(output)) != version {
-		return errors.New("bundled version mismatch")
+		return errors.New("release version mismatch")
 	}
 	raw, err := os.ReadFile("hooks/hooks.json")
 	if err != nil {
@@ -210,7 +219,7 @@ func smoke(t target, version string) error {
 			"session_id": "00000000-0000-4000-8000-000000000001", "agent_id": "00000000-0000-4000-8000-000000000002"})
 		cmd := exec.Command(launcher[0], launcher[1:]...)
 		cmd.Dir = cwd
-		cmd.Env = append(os.Environ(), "PLUGIN_ROOT="+root)
+		cmd.Env = append(os.Environ(), "PLUGIN_ROOT="+root, "PLUGIN_DATA="+dataDir)
 		cmd.Stdin = bytes.NewReader(payload)
 		output, err := cmd.Output()
 		if err != nil {
@@ -232,7 +241,7 @@ func smoke(t target, version string) error {
 			}
 		}
 	}
-	if err := os.Remove(binary); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "scripts/SHA256SUMS"), []byte("invalid\n"), 0644); err != nil {
 		return err
 	}
 	command := config.Hooks["SessionStart"][0].Hooks[0]
@@ -242,11 +251,11 @@ func smoke(t target, version string) error {
 	}
 	cmd := exec.Command(launcher[0], launcher[1:]...)
 	cmd.Dir = cwd
-	cmd.Env = append(os.Environ(), "PLUGIN_ROOT="+root)
+	cmd.Env = append(os.Environ(), "PLUGIN_ROOT="+root, "PLUGIN_DATA="+dataDir)
 	output, err = cmd.CombinedOutput()
 	if err == nil || len(bytes.TrimSpace(output)) == 0 {
-		return errors.New("missing bundled CLI must fail with a diagnostic")
+		return errors.New("invalid pinned checksum must fail with a diagnostic")
 	}
-	fmt.Printf("native smoke verified %s/%s: version %s, three hook events, missing-binary diagnostic\n", t.OS, t.Arch, version)
+	fmt.Printf("native smoke verified %s/%s: version %s, three hook events, invalid-checksum diagnostic\n", t.OS, t.Arch, version)
 	return nil
 }

@@ -1,5 +1,7 @@
 # 统一 Go CLI、PR Watch 与 Hooks Implementation Plan
 
+> 更新：二进制分发设计已改为启动脚本首次下载固定版本、校验并缓存。本文中的随包二进制、Git 跟踪 bin/ 与旧启动命令描述已被取代；当前流程见 README 的 Binary releases 小节。Go 仍承载全部业务逻辑，shell/PowerShell 仅下载和转发。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 将路由 hooks、PR 轮询与状态、watcher 登记统一到 goldilocks Go CLI，移除 Python 运行和发布依赖。

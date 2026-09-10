@@ -17,14 +17,10 @@ jobs:
       - run: go test ./...
       - if: runner.os == 'Linux'
         run: go test -race ./...
-      - run: go run ./scripts/build.go --check
-  binaries:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25.6'
-          cache: false
       - run: go run ./scripts/build.go
-      - run: git diff --exit-code -- bin
+      - run: git diff --exit-code -- scripts/SHA256SUMS
+      - if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: goldilocks-release-assets
+          path: bin/

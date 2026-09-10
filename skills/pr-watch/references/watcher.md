@@ -14,9 +14,9 @@ A running shell process does not keep your agent active or automatically wake it
 
 Finish only after terminal-state cleanup below, or an explicit monitor-failure report when you cannot continue. A final answer must say the watch has ended or failed, never that monitoring continues in the background.
 
-## Locate the bundled CLI and lifecycle protection
+## Locate the CLI launcher and lifecycle protection
 
-Derive the plugin root from the actual absolute location of this reference: references/watcher.md is under skills/pr-watch in that root. Set CLI_BIN to the absolute bundled executable for the host: bin/Darwin-arm64/goldilocks, bin/Darwin-x86_64/goldilocks, bin/Linux-aarch64/goldilocks, or bin/Linux-x86_64/goldilocks. Determine the real OS/architecture; do not assume PATH, PLUGIN_DATA, or an old computer's path. This release supports Windows hooks, not PR monitoring.
+Derive the plugin root from the actual absolute location of this reference: references/watcher.md is under skills/pr-watch in that root. Set CLI_BIN to its absolute `scripts/goldilocks.sh` path. This launcher forwards all commands to the pinned Go CLI, downloading the matching release into PLUGIN_DATA (or the user's cache when that environment variable is absent) on first use. Run `"$CLI_BIN" --version` first; a missing release, download failure, or checksum mismatch is a setup failure, not a running watcher. First use requires HTTPS access to GitHub Releases, curl, and sha256sum or shasum; warm use needs no network. Never replace the pinned version/checksum, bypass validation, or compile from source to work around a failed download. For an explicitly configured standalone CLI, use its actual absolute path and verify compatibility.
 
 For standalone skills, use an explicitly available compatible CLI absolute path; instructions alone do not include a binary. If none exists, fail clearly without a Python fallback. Verify the binary reports exactly 0.2.0 and exposes hook, pr-watch, and watcher in its root help:
 

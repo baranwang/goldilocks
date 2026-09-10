@@ -1,1 +1,2 @@
-bin/SHA256SUMS text eol=lf
+scripts/SHA256SUMS text eol=lf
+*.sh text eol=lf

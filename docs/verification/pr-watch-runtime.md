@@ -1,5 +1,10 @@
 # PR Watch runtime evidence and release gates
 
+> Distribution update: tracked binaries have been replaced by version-pinned,
+> checksum-verified downloads through shell/PowerShell launchers. The bundled
+> binary results below describe the earlier candidate. Current launcher checks
+> and remaining release work are recorded in [cli-launcher.md](cli-launcher.md).
+
 Date: 2026-09-10
 
 This document records the runtime gate for the unified Go CLI migration. It is

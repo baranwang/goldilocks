@@ -55,8 +55,19 @@ current agent preserves explicit user choices, checks the tool schema,
 classifies the child task, and changes only supported `model` and
 `reasoning_effort` fields.
 
-One bundled Go CLI provides hooks, PR monitoring, and watcher registration.
-No Python or Go installation is required; online PR reads use authenticated gh.
+One Go CLI provides hooks, PR monitoring, and watcher registration. A thin
+shell/PowerShell launcher downloads the matching `v<plugin-version>` GitHub
+Release binary on first use, checks its SHA-256 against `scripts/SHA256SUMS`,
+and caches it under `PLUGIN_DATA`. Subsequent calls reuse the verified cache.
+Outside plugin hooks, the fallback is `${XDG_CACHE_HOME:-$HOME/.cache}/goldilocks`
+on macOS/Linux and `%LOCALAPPDATA%/goldilocks` on Windows.
+
+No Node, Python, or Go installation is required. First use needs HTTPS access
+to GitHub Releases and curl (curl.exe on modern Windows); macOS/Linux also use
+sha256sum or shasum. Online PR reads use authenticated gh. Failed downloads or
+checksum mismatches produce an error; retry once the release/network is available.
+Hook timeout is 150 seconds to allow a cold download; cache hits execute directly.
+Review and trust changed hooks before using them.
 Changes are delivered after 30 seconds of observed quiet by default.
 PR monitoring supports macOS/Linux in this release; Windows covers hooks.
 
@@ -89,6 +100,25 @@ missing lifecycle protection. No compatible CLI means monitoring cannot start.
 Local monitoring cannot guarantee continuation during machine sleep, app exit,
 hard interruption, or quota exhaustion. Tool waits can consume tokens; this is
 not a zero-cost daemon.
+
+## Binary releases
+
+`bin/` is a local build output, not tracked source. Run
+`go run ./scripts/build.go` with Go 1.25.6 to build all six platforms, regenerate
+`scripts/SHA256SUMS`, and verify native launcher/hook behavior. Commit the
+checksum update alongside any Go source or plugin-version change. CI rebuilds
+and rejects a mismatch with the committed checksums.
+
+After validation, push a tag matching the plugin version (for example,
+`v0.2.0`). The Release workflow builds and verifies the pinned assets before
+publishing six executables and SHA256SUMS to GitHub Releases. Publish those
+assets before distributing the matching plugin version. Releases must remain
+available and immutable for that plugin version; there is no `latest` fallback.
+
+POSIX downloads use a directory lock and clean it up on normal failure or
+interruption. A hard-killed downloader can leave `download.lock`; after checking
+that no downloader is active, remove that specific lock directory and retry.
+Windows uses an OS-managed file lock, released when the process exits.
 
 ## License
 

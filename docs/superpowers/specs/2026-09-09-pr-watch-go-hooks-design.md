@@ -1,5 +1,7 @@
 # Goldilocks：统一 Go CLI、PR Watch 与 Hooks 规格
 
+> 更新：二进制分发设计已改为启动脚本首次下载固定版本、校验并缓存。本文中的随包二进制、Git 跟踪 bin/ 与旧启动命令描述已被取代；当前流程见 README 的 Binary releases 小节。Go 仍承载全部业务逻辑，shell/PowerShell 仅下载和转发。
+
 日期：2026-09-09
 
 需求来源：[issue #5](https://github.com/baranwang/goldilocks/issues/5)
