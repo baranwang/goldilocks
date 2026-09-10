@@ -10,12 +10,14 @@
 
 **No workflow changes. Just the right model.**
 
-Goldilocks is a lightweight Codex plugin. It steps in only after the existing
-workflow has decided to create a subagent, helping select a suitable model and
-reasoning effort.
+Goldilocks is a lightweight Codex plugin for model routing and PR monitoring.
+Its model-routing skill steps in only after the existing workflow has decided
+to create a subagent, helping select a suitable model and reasoning effort.
 
-It does not decide whether to create subagents or change tasks and workflows.
-Its only responsibility is choosing the model and reasoning effort.
+The `model-routing` skill does not decide whether to create subagents or change
+tasks and workflows. Its only responsibility is choosing model and reasoning
+effort. The `pr-watch` skill delegates continuous PR monitoring and evidence
+delivery to a child.
 
 ## Why Goldilocks
 
@@ -42,8 +44,8 @@ codex plugin marketplace add baranwang/goldilocks
 codex plugin add goldilocks@goldilocks
 ```
 
-Use `/hooks` to review and trust the Goldilocks hook scripts, then start a new
-Codex task for the plugin to take effect.
+Review and trust the installed hooks, then use a task that loaded that version.
+Use `/hooks` to inspect the hook definitions.
 
 ## How it works
 
@@ -53,8 +55,10 @@ current agent preserves explicit user choices, checks the tool schema,
 classifies the child task, and changes only supported `model` and
 `reasoning_effort` fields.
 
-The runtime stays minimal: it uses native POSIX `sh`/`awk` on macOS and Linux,
-and PowerShell on Windows. It requires neither Node.js nor Python.
+One bundled Go CLI provides hooks, PR monitoring, and watcher registration.
+No Python or Go installation is required; online PR reads use authenticated gh.
+Changes are delivered after 30 seconds of observed quiet by default.
+PR monitoring supports macOS/Linux in this release; Windows covers hooks.
 
 | Route | Intended work | Default behavior |
 |---|---|---|
@@ -71,6 +75,20 @@ workflow settings always take precedence. If `fork_turns` is omitted or set to
 does not allow compute overrides, Goldilocks keeps `fork_turns` unchanged and
 inherits the existing configuration. It never changes context forking to force
 model routing.
+
+## PR monitoring
+
+Ask to monitor a PR, or use `$pr-watch`. The main task receives CI, comments,
+and review evidence; its child owns polling, delivery, acknowledgements, and
+cleanup until merge, closure, or an explicit stop. The default poll interval is
+60 seconds. Monitoring does not authorize posting, pushing, or merging.
+
+Standalone skills contain instructions only and require a compatible CLI.
+Without loaded, trusted hooks, the child skips watcher registration and reports
+missing lifecycle protection. No compatible CLI means monitoring cannot start.
+Local monitoring cannot guarantee continuation during machine sleep, app exit,
+hard interruption, or quota exhaustion. Tool waits can consume tokens; this is
+not a zero-cost daemon.
 
 ## License
 

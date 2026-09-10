@@ -157,6 +157,7 @@ func TestReadStateValidatesShapeAndKeepsLargeNumbers(t *testing.T) {
 		"trailing JSON":      raw + `{}`,
 		"unknown version":    strings.Replace(raw, `"version":3`, `"version":999`, 1),
 		"missing collecting": strings.Replace(raw, `,"collecting":null`, "", 1),
+		"null finished":      strings.Replace(raw, `"finished":false`, `"finished":null`, 1),
 		"noncanonical URL":   strings.Replace(raw, testPR, testPR+"/", 1),
 		"missing snapshot":   strings.Replace(raw, `"head_sha":"abc123",`, "", 1),
 		"bad comment":        fmt.Sprintf(`{"version":3,"pr_url":%q,"snapshot":%s,"pending":null,"last_ack":null,"error":null,"finished":false,"collecting":null}`, testPR, strings.Replace(validSnapshot, `"comments":{}`, `"comments":{"1":"bad"}`, 1)),
@@ -188,12 +189,18 @@ func TestReadStateRejectsInvalidPendingAndCollecting(t *testing.T) {
 		"empty event":    fmt.Sprintf(`{"event":%s,"snapshot":null,"error":null}`, strings.Replace(event, `"event_id":"event-1"`, `"event_id":""`, 1)),
 		"empty messages": fmt.Sprintf(`{"event":%s,"snapshot":null,"error":null,"messages":[]}`, event),
 		"bad prompt":     fmt.Sprintf(`{"event":%s,"snapshot":null,"error":null,"messages":[{"prompt":7}]}`, event),
+		"null prompt":    fmt.Sprintf(`{"event":%s,"snapshot":null,"error":null,"messages":[{"prompt":null}]}`, event),
 	} {
 		t.Run(name, func(t *testing.T) {
 			raw := strings.Replace(base, `"pending":null`, `"pending":`+replacement, 1)
 			check(t, os.WriteFile(path, []byte(raw), 0600))
 			if _, err := pw.ReadState(path); err == nil {
 				t.Fatal("accepted invalid pending")
+			}
+			got, err := os.ReadFile(path)
+			check(t, err)
+			if string(got) != raw {
+				t.Fatal("invalid pending state was modified")
 			}
 		})
 	}

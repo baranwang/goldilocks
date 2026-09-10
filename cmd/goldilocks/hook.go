@@ -64,6 +64,15 @@ func RunHook(input io.Reader, output io.Writer, root string) error {
 				"hookEventName": event.Name, "additionalContext": body,
 			},
 		})
+	case "SubagentStop":
+		decision, err := CheckStop(event)
+		if err != nil {
+			return err
+		}
+		if decision == nil {
+			return nil
+		}
+		return json.NewEncoder(output).Encode(decision)
 	default:
 		return nil
 	}

@@ -127,6 +127,9 @@ func ReadState(path string) (State, error) {
 	if err := validateNullableString(fields["error"]); err != nil {
 		return State{}, fmt.Errorf("error: %w", err)
 	}
+	if isNull(fields["finished"]) {
+		return State{}, errors.New("finished must be a bool")
+	}
 	var finished bool
 	if err := decodeJSON(fields["finished"], &finished); err != nil {
 		return State{}, fmt.Errorf("finished: %w", err)
@@ -348,7 +351,7 @@ func validatePending(raw []byte, pr PR) error {
 		}
 		for _, value := range values {
 			prompt, ok := value["prompt"]
-			if !ok {
+			if !ok || isNull(prompt) {
 				return errors.New("message prompt must be a string")
 			}
 			var text string

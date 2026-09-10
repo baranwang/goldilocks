@@ -1,6 +1,6 @@
 # PR Watch runtime evidence and release gates
 
-Date: 2026-09-09
+Date: 2026-09-10
 
 This document records the runtime gate for the unified Go CLI migration. It is
 evidence for implementation tasks, not proof that production lifecycle
@@ -17,6 +17,10 @@ in the retained raw records.
 | Check | Result | Evidence scope |
 | --- | --- | --- |
 | Baseline helper | passed | pinned source, 20 unittest cases |
+| Full Go migration suite | passed | Go 1.25.6, macOS arm64, all packages plus PR-watch tests |
+| Race-enabled lifecycle package | passed | `go test -race ./cmd/goldilocks` |
+| Six bundled formats and checksums | passed | rebuilt, format-checked, and matched `SHA256SUMS` |
+| Packaged macOS arm64 execution | passed | extracted candidate, different cwd, PATH without Go or Python |
 | Trusted hook discovery | passed | desktop binary 0.153.4, project hooks |
 | Fresh v2 SubagentStart/Stop | passed | ephemeral session using desktop binary |
 | Child env UUID equals hook agent_id | passed | exact equality in captured records |
@@ -28,11 +32,12 @@ in the retained raw records.
 | Desktop UI cancellation | not_verified | separate from API interruption |
 | Idle App parent wakeup | not_verified | no App test messages sent |
 | Real event after 20+ quiet minutes | not_verified | no long-running PR integration yet |
-| Cross-platform installed execution | not_verified | native probe only |
+| Candidate installation and trusted-hook loading | not_verified | candidate was archived, not installed |
+| Cross-platform installed execution | not_verified | five non-native binaries were cross-built only |
 
 ## Evidence boundary
 
-The baseline is Goldilocks commit
+The historical lifecycle baseline is Goldilocks commit
 `588d0ee51b0ae327191b7a66e4f17c05f86f4315` and migration source
 `baranwang/skills` commit `7417f5545a3aa070216113299a1ffd9b543a7669`.
 The pinned source contains 20 PR watcher unittest cases, and the retained
@@ -60,9 +65,53 @@ The API interruption result does not cover Desktop UI cancellation or prove
 automatic watcher cleanup after a hard interruption. An earlier failed
 cancellation fixture is excluded because it did not reach readiness.
 
+## Local candidate verification
+
+The local verification ran on 2026-09-10 in the `Asia/Shanghai` time zone. It
+covered candidate version 0.2.0 with Go 1.25.6 on macOS arm64 and Codex CLI
+0.153.4. The existing installed marketplace package remained at 0.1.0; it was
+not treated as the candidate and its install, cache, hooks, and trust settings
+were not changed.
+
+The following commands passed against the staged candidate source:
+
+```text
+go test -race ./cmd/goldilocks
+go test ./... ./__tests__/pr-watch
+go run ./scripts/build.go
+git diff --exit-code -- bin
+git diff --check
+```
+
+The full Go suite covers the migrated PR state, GitHub collection, message
+preparation, CLI, built-binary polling, and watcher lifecycle packages. The
+build regenerated six static binaries, checked their Mach-O, ELF, and PE
+formats, and reproduced the sorted checksum manifest without changing the
+staged binaries.
+
+Focused state regressions reject JSON `null` for the required `finished` and
+prepared-message `prompt` scalars while preserving the rejected state file,
+nullable fields, and existing v2 prompt strings byte-for-byte.
+
+The staged tree was exported with `git archive` and extracted into a clean
+candidate directory. The extracted manifest reported 0.2.0; all six archived
+binaries matched its archived `SHA256SUMS`. The Darwin arm64 binary reported
+0.2.0 from another working directory with a runtime PATH containing neither
+Go nor Python. The three real command strings from `hooks/hooks.json` were
+then exercised with synthetic SessionStart, SubagentStart, and unregistered
+SubagentStop payloads. The first two injected the routing instructions and the
+unregistered stop produced no output. These payloads are packaging smoke
+inputs, not Codex runtime hook acceptance.
+
+The Darwin x86-64, Linux arm64/x86-64, and Windows arm64/x86-64 artifacts were
+cross-built and format/checksum verified. They were not executed on their
+target platforms and remain `not_verified`. Windows PR polling is unsupported
+in this release even though the Windows lifecycle hook launcher is bundled.
+
 ## Runtime versions and feature flags
 
-The following values were inspected on 2026-09-09. Process inspection
+The following values were inspected on 2026-09-09 and refreshed where shown
+by the 2026-09-10 local candidate run. Process inspection
 confirmed that the Desktop task used the app-bundled `codex` executable; its
 machine-specific absolute path is intentionally omitted.
 
@@ -70,7 +119,7 @@ machine-specific absolute path is intentionally omitted.
 | --- | --- |
 | `codex --version` | `codex-cli 0.153.4` |
 | `codex features list` | `hooks stable true`; `multi_agent stable true`; `multi_agent_v2 stable false`; `plugin_hooks removed false` |
-| `go version` | `go version go1.25.6 darwin/arm64` |
+| `go version` | `go version go1.25.6 darwin/arm64` (refreshed 2026-09-10) |
 | `gh --version` | `gh version 2.96.0 (2026-07-02)` |
 
 The CLI default `multi_agent_v2=false` can differ from Desktop behavior. The
@@ -95,19 +144,26 @@ A daemon, an additional sidebar task, or unbounded follow-up restarts cannot
 substitute for this gate. A replacement poller also cannot prove that the
 original child resumed.
 
-Task 11 owns the remaining live acceptance work: Desktop UI cancellation,
-idle App parent wakeup, complete message-part delivery followed by ack, and a
-real event after more than 20 quiet minutes within an observation lasting at
-least 25 minutes. Cross-platform installed execution remains a packaging gate.
-Until those checks run, they stay `not_verified`; fixture input cannot promote
-them to `passed`.
+The remaining live acceptance work requires an explicitly authorized test PR,
+an actual idle App parent task, and a candidate installation whose hooks have
+been reviewed and trusted. It includes two runs of each premature-final
+window, normal completion, duplicate-watch reuse, same-cwd PR isolation,
+stopping/failure/interruption recovery, Desktop UI cancellation, idle App
+wakeup, complete multipart delivery and acknowledgement, and a real event
+after more than 20 quiet minutes within an observation lasting at least 25
+minutes. Each supported target platform also needs installed execution from a
+path containing spaces and the wrong/missing-architecture error checks. Until
+those checks run, they stay `not_verified`; local fixtures, synthetic hook
+payloads, successful cross-builds, and metadata parsing cannot promote them to
+`passed`.
 
 ## Go migration coverage map
 
-All production tests for the migrated implementation must be Go `*_test.go`
-files under `__tests__/pr-watch`. The 20 Python cases below define the pinned
-behavioral assertions; keeping only their count is insufficient. Neither the
-executor nor an installed user needs Python.
+The 20 Python cases below define the pinned behavioral assertions now covered
+by Go `*_test.go` files under `__tests__/pr-watch`. Hook registration and
+lifecycle continuation coverage lives with the CLI in
+`cmd/goldilocks/watcher_test.go`. Neither the test runner nor an installed user
+needs Python.
 
 | Original `test_` suffix | Go file | Assertion retained |
 | --- | --- | --- |
