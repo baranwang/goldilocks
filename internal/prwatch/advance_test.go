@@ -277,6 +277,56 @@ func TestManagedYieldDiscardsReadAndPreservesCollection(t *testing.T) {
 	}
 }
 
+func TestManagedYieldStopsCollectionBeforeNextGitHubCall(t *testing.T) {
+	c, r, s := boundFixture(t)
+	clock := newManagedClock()
+	firstRead, releaseFirst := make(chan struct{}), make(chan struct{})
+	secondRead := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.PollManaged(context.Background(), s, Dependencies{
+			Read: func(ctx context.Context, pr PR, cancelled func() bool) (Snapshot, error) {
+				return Collect(ctx, pr, func(context.Context, ...string) (any, error) {
+					select {
+					case <-firstRead:
+						close(secondRead)
+						return nil, errors.New("second GitHub call ran after yield")
+					default:
+						close(firstRead)
+						<-releaseFirst
+						return map[string]any{
+							"headRefOid": "abc123", "state": "OPEN", "isDraft": false,
+							"mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
+						}, nil
+					}
+				}, cancelled)
+			},
+			Now: clock.Now, Wait: clock.pollingWait,
+		})
+		done <- err
+	}()
+	<-firstRead
+	if err := c.Yield(r.TicketFile, specChild); err != nil {
+		t.Fatal(err)
+	}
+	close(releaseFirst)
+	if err := <-done; !errors.Is(err, ErrYielded) {
+		t.Fatal(err)
+	}
+	select {
+	case <-secondRead:
+		t.Fatal("collection made another GitHub call after yield")
+	default:
+	}
+	release, err := s.Lock(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestManagedYieldKeepsExactPendingBytes(t *testing.T) {
 	c, r, s := boundFixture(t)
 	clock := newManagedClock()

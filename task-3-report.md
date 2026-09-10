@@ -21,3 +21,32 @@ ok github.com/baranwang/goldilocks/cmd/goldilocks
 ok github.com/baranwang/goldilocks/internal/prwatch
 ok github.com/baranwang/goldilocks/scripts
 ```
+
+## Fix round 1
+
+The managed read callback now checks both the stop file and the persisted
+execution ID/end marker. This lets `Collect` stop between GitHub API calls
+after `Yield`, while the post-read transaction returns `ErrYielded` without
+applying a partial snapshot.
+
+Added `TestManagedYieldStopsCollectionBeforeNextGitHubCall`, which blocks the
+first fake GitHub request, persists a yield, then verifies collection does not
+begin the next request and the worker lock is released.
+
+Validation run with `GOTOOLCHAIN=go1.25.6`:
+
+```text
+go test ./internal/prwatch -run TestManagedYieldStopsCollectionBeforeNextGitHubCall -count=1 -v
+PASS
+
+go test ./internal/prwatch -run 'TestManagedQuiet|TestManagedWorker|TestManagedStop|TestManagedHeartbeat|TestManagedYield|TestManagedCancellation|TestManagedRestart|TestManagedNew|TestWorkerStatus' -count=1
+ok github.com/baranwang/goldilocks/internal/prwatch
+
+go test -race ./internal/prwatch -count=1
+ok github.com/baranwang/goldilocks/internal/prwatch
+
+go test ./... -count=1
+ok github.com/baranwang/goldilocks/cmd/goldilocks
+ok github.com/baranwang/goldilocks/internal/prwatch
+ok github.com/baranwang/goldilocks/scripts
+```

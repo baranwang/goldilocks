@@ -224,7 +224,9 @@ func (c *Controller) PollManaged(ctx context.Context, s *Store, deps Dependencie
 		}
 
 		started := deps.Now()
-		snapshot, readErr := deps.Read(workerCtx, s.PR, func() bool { return stopped(s) })
+		snapshot, readErr := deps.Read(workerCtx, s.PR, func() bool {
+			return stopped(s) || executionEnded(s, executionID)
+		})
 		if err := managedHeartbeatError(heartbeatErr); err != nil {
 			return nil, err
 		}
@@ -312,6 +314,11 @@ func managedUpdate(s *Store, fn func(*Store) error) error {
 func stopped(s *Store) bool {
 	_, err := os.Stat(s.StopPath)
 	return err == nil
+}
+
+func executionEnded(s *Store, executionID string) bool {
+	state, err := ReadState(s.Path)
+	return err != nil || state.Control == nil || state.Control.Worker.ID != executionID || state.Control.Worker.Ended
 }
 
 func (c *Controller) Yield(ticketFile, agentID string) error {
