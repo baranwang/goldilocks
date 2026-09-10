@@ -16,8 +16,14 @@ try {
     $data = if ($env:PLUGIN_DATA) { $env:PLUGIN_DATA } else { Join-Path $env:LOCALAPPDATA 'goldilocks' }
     $cache = Join-Path $data "bin/$version/$platform"
     $binary = Join-Path $cache 'goldilocks.exe'
+    function Get-Digest([string]$Path) {
+        $stream = [IO.File]::OpenRead($Path)
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '') }
+        finally { $sha.Dispose(); $stream.Dispose() }
+    }
     function Test-CachedBinary {
-        (Test-Path -LiteralPath $binary -PathType Leaf) -and ((Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash -eq $expected)
+        (Test-Path -LiteralPath $binary -PathType Leaf) -and ((Get-Digest $binary) -eq $expected)
     }
     if (-not (Test-CachedBinary)) {
         [void][IO.Directory]::CreateDirectory($cache)
@@ -38,7 +44,7 @@ try {
                     # curl.exe is included in supported modern Windows versions.
                     & curl.exe --fail --location --silent --show-error --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 60 --output $temporary "https://github.com/baranwang/goldilocks/releases/download/v$version/$asset"
                     if ($LASTEXITCODE -ne 0) { throw "download failed for v$version/$asset; retry when the release and network are available" }
-                    if ((Get-FileHash -LiteralPath $temporary -Algorithm SHA256).Hash -ne $expected) { throw "SHA-256 mismatch for $asset" }
+                    if ((Get-Digest $temporary) -ne $expected) { throw "SHA-256 mismatch for $asset" }
                     if (Test-Path -LiteralPath $binary) { [IO.File]::Replace($temporary, $binary, $null) }
                     else { [IO.File]::Move($temporary, $binary) }
                 } finally { if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force } }
