@@ -149,11 +149,10 @@ func (s *Store) Stop(at time.Time) (json.RawMessage, error) {
 }
 
 func Watch(ctx context.Context, s *Store, options Options, deps Dependencies) (json.RawMessage, error) {
-	quietDeadline := time.Time{}
+	cycle := PollCycle{}
 	if s.Data.Collecting != nil {
-		quietDeadline = deps.Now().Add(options.Quiet)
+		cycle.QuietDeadline = deps.Now().Add(options.Quiet)
 	}
-	failures, readFailed := 0, false
 	stopped := func() bool {
 		_, err := os.Stat(s.StopPath)
 		return err == nil
@@ -171,49 +170,13 @@ func Watch(ctx context.Context, s *Store, options Options, deps Dependencies) (j
 		}
 
 		started := deps.Now()
-		snapshot, err := deps.Read(ctx, s.PR, stopped)
-		if errors.Is(err, ErrStopped) {
-			return s.Stop(deps.Now())
+		snapshot, readErr := deps.Read(ctx, s.PR, stopped)
+		outcome, err := s.ApplyPoll(snapshot, readErr, started, deps.Now(), options, cycle)
+		if err != nil || outcome.Event != nil {
+			return outcome.Event, err
 		}
-		if err != nil {
-			var failure *ReadError
-			if !errors.As(err, &failure) {
-				return nil, err
-			}
-			failures++
-			readFailed = true
-			if failures >= 3 {
-				event, saveErr := s.Failure(err.Error(), deps.Now())
-				if saveErr != nil || event != nil {
-					return event, saveErr
-				}
-			}
-		} else {
-			failures = 0
-			kind, saveErr := s.Observe(snapshot, deps.Now())
-			if saveErr != nil {
-				return nil, saveErr
-			}
-			if kind == "initial" || kind == "merged" || kind == "closed" || kind == "recovered" && s.Data.Snapshot == nil {
-				return s.Freeze("", deps.Now())
-			}
-			if kind != "" || readFailed && s.Data.Collecting != nil {
-				quietDeadline = deps.Now().Add(options.Quiet)
-			}
-			if s.Data.Collecting != nil && kind == "" && !readFailed && !quietDeadline.IsZero() && !started.Before(quietDeadline) {
-				return s.Freeze("", deps.Now())
-			}
-			readFailed = false
-		}
-
-		delay := min(options.Interval, 300*time.Second)
-		for range min(failures, 3) {
-			delay = min(2*delay, 300*time.Second)
-		}
-		next := deps.Now().Add(delay)
-		if !readFailed && !quietDeadline.IsZero() && quietDeadline.Before(next) {
-			next = quietDeadline
-		}
+		cycle = outcome.Cycle
+		next := deps.Now().Add(outcome.Delay)
 		for deps.Now().Before(next) && !stopped() {
 			if err := deps.Wait(ctx, min(time.Second, next.Sub(deps.Now()))); err != nil {
 				return nil, err
