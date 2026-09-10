@@ -50,6 +50,8 @@ func TestAppReceiptRequiresExactUnambiguousResult(t *testing.T) {
 		{"invalid isError type", `{"isError":"false","content":[]}`, false, true},
 		{"wrong returned thread", `{"isError":false,"content":[{"type":"text","text":"{\"threadId\":\"` + specChild + `\"}"}]}`, false, true},
 		{"conflicting returned threads", `{"isError":false,"content":[{"type":"text","text":"{\"threadId\":\"` + specParent + `\"}"},{"type":"text","text":"{\"threadId\":\"` + specChild + `\"}"}]}`, false, true},
+		{"duplicate thread key", `{"isError":false,"content":[{"type":"text","text":"{\"threadId\":\"` + specChild + `\",\"threadId\":\"` + specParent + `\"}"}]}`, false, true},
+		{"duplicate invalid thread key", `{"isError":false,"content":[{"type":"text","text":"{\"threadId\":1,\"threadId\":\"` + specParent + `\"}"}]}`, false, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

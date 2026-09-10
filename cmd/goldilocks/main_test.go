@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -159,6 +160,79 @@ func TestManagedObservationFailureIsFailOpen(t *testing.T) {
 	if got.HookSpecificOutput.AdditionalContext != "# Router" || !strings.Contains(got.SystemMessage, "observation failed") {
 		t.Fatalf("managed failure discarded routing or diagnostic: %s", out.String())
 	}
+}
+
+func TestWindowsManagedDiagnosticRequiresMatchingIntent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	c, err := prwatch.NewController(filepath.Join(home, "goldilocks", "pr-watch"), time.Now)
+	if err != nil {
+		t.Skipf("fixture requires managed controller: %v", err)
+	}
+	start, err := c.Start(runtimeParent, t.TempDir(), "https://github.com/example/project/pull/17", prwatch.StartOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unrelated := HookEvent{
+		Name: "SubagentStart", SessionID: "00000000-0000-4000-8000-000000000014",
+		AgentID: runtimeChild, TurnID: runtimeTurn,
+	}
+	if err := observeManagedRuntimeOn(unrelated, "windows"); err != nil {
+		t.Fatalf("unrelated Windows lifecycle event diagnosed: %v", err)
+	}
+	managed := unrelated
+	managed.SessionID = runtimeParent
+	if err := observeManagedRuntimeOn(managed, "windows"); !errors.Is(err, prwatch.ErrUnsupportedPlatform) {
+		t.Fatalf("managed Windows lifecycle event returned %v", err)
+	}
+	if err := c.ObserveStart(runtimeParent, runtimeChild, runtimeTurn); err != nil {
+		t.Fatal(err)
+	}
+	store, err := c.Bind(start.TicketFile, runtimeChild)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := HookEvent{
+		Name: "PostToolUse", AgentID: runtimeChild,
+		ToolName: "mcp__codex_app__send_message_to_thread", ToolUseID: "call-1",
+		ToolInput: json.RawMessage(`{"threadId":"00000000-0000-4000-8000-000000000014","prompt":"marker"}`),
+	}
+	if err := observeManagedRuntimeOn(tool, "windows"); err != nil {
+		t.Fatalf("unrelated Windows tool event diagnosed: %v", err)
+	}
+	tool.ToolInput = json.RawMessage(`{"threadId":"` + runtimeParent + `","prompt":"marker"}`)
+	if err := observeManagedRuntimeOn(tool, "windows"); err != nil {
+		t.Fatalf("unoffered Windows tool event diagnosed: %v", err)
+	}
+	var action prwatch.Action
+	if err := store.Update(func(tx *prwatch.Store) error {
+		snapshot := prwatch.Snapshot{
+			"head_sha": "abc123", "state": "OPEN", "draft": false,
+			"mergeable": "MERGEABLE", "merge_state": "CLEAN", "checks": []any{},
+			"comments": map[string]any{}, "reviews": map[string]any{}, "threads": map[string]any{},
+		}
+		if _, err := tx.Stage("initial", snapshot, prwatch.Changes{}, nil, nil, time.Now()); err != nil {
+			return err
+		}
+		var err error
+		action, err = tx.Offer(time.Now())
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tool.ToolInput = json.RawMessage(`{"threadId":"` + runtimeParent + `","prompt":` + mustJSON(t, action.Prompt) + `}`)
+	if err := observeManagedRuntimeOn(tool, "windows"); !errors.Is(err, prwatch.ErrUnsupportedPlatform) {
+		t.Fatalf("managed Windows tool event returned %v", err)
+	}
+}
+
+func mustJSON(t *testing.T, value string) string {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
 }
 
 func TestUnrelatedRuntimeEventDoesNotCreateControllerState(t *testing.T) {

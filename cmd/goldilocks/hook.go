@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/baranwang/goldilocks/internal/prwatch"
@@ -82,6 +83,10 @@ func RunHook(input io.Reader, output io.Writer, root string) error {
 }
 
 func observeManagedRuntime(event HookEvent) error {
+	return observeManagedRuntimeOn(event, runtime.GOOS)
+}
+
+func observeManagedRuntimeOn(event HookEvent, goos string) error {
 	if event.Name == "PostToolUse" && event.ToolName != "mcp__codex_app__send_message_to_thread" {
 		return nil
 	}
@@ -93,6 +98,13 @@ func observeManagedRuntime(event HookEvent) error {
 		return nil
 	} else if err != nil {
 		return err
+	}
+	managed, err := prwatch.RuntimeManaged(root, event)
+	if err != nil || !managed {
+		return err
+	}
+	if goos == "windows" {
+		return prwatch.ErrUnsupportedPlatform
 	}
 	controller, err := prwatch.NewController(root, nil)
 	if err != nil {

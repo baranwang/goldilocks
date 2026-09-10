@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -86,11 +89,12 @@ func DecodeSend(event RuntimeEvent, observedAt time.Time) (ObservedSend, bool, e
 		if block.Type != "text" {
 			continue
 		}
-		var receipt struct {
-			ThreadID string `json:"threadId"`
+		threadID, found, err := receiptThreadID(block.Text)
+		if err != nil {
+			return send, true, err
 		}
-		if decodeJSON([]byte(block.Text), &receipt) == nil && receipt.ThreadID != "" {
-			returned = append(returned, receipt.ThreadID)
+		if found {
+			returned = append(returned, threadID)
 		}
 	}
 	if len(returned) == 0 {
@@ -101,6 +105,45 @@ func DecodeSend(event RuntimeEvent, observedAt time.Time) (ObservedSend, bool, e
 	}
 	send.Accepted = true
 	return send, true, nil
+}
+
+func receiptThreadID(text string) (string, bool, error) {
+	decoder := json.NewDecoder(strings.NewReader(text))
+	start, err := decoder.Token()
+	if err != nil || start != json.Delim('{') {
+		return "", false, nil
+	}
+	var threadIDRaw json.RawMessage
+	seen := false
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			return "", false, nil
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return "", false, nil
+		}
+		if key != "threadId" {
+			continue
+		}
+		if seen {
+			return "", false, errors.New("send result contains duplicate threadId fields")
+		}
+		seen = true
+		threadIDRaw = value
+	}
+	if _, err := decoder.Token(); err != nil {
+		return "", false, nil
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		return "", false, nil
+	}
+	var threadID string
+	if !seen || decodeJSON(threadIDRaw, &threadID) != nil {
+		return "", false, nil
+	}
+	return threadID, seen && threadID != "", nil
 }
 
 func (c *Controller) ObserveRuntime(event RuntimeEvent) error {
@@ -127,4 +170,64 @@ func (c *Controller) observeRuntime(event RuntimeEvent) error {
 	default:
 		return nil
 	}
+}
+
+func RuntimeManaged(root string, event RuntimeEvent) (bool, error) {
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return false, err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	c := &Controller{Root: resolved, Now: time.Now}
+	switch event.Name {
+	case "SubagentStart":
+		if !validUUID(event.SessionID) {
+			return false, nil
+		}
+		states, err := c.parentStates(event.SessionID)
+		if err != nil {
+			return false, err
+		}
+		now := time.Now().UTC()
+		for _, state := range states {
+			control := state.Control
+			if control != nil && control.ParentID == event.SessionID && control.AgentID == "" &&
+				control.Stage == Starting && !now.After(control.BindAfter.Add(bindLifetime)) {
+				return true, nil
+			}
+		}
+	case "PostToolUse":
+		if event.ToolName != appSendTool || !validUUID(event.AgentID) {
+			return false, nil
+		}
+		var input struct {
+			ThreadID string `json:"threadId"`
+			Prompt   string `json:"prompt"`
+		}
+		if decodeJSON(event.ToolInput, &input) != nil || !validUUID(input.ThreadID) || input.Prompt == "" {
+			return false, nil
+		}
+		states, err := c.parentStates(input.ThreadID)
+		if err != nil {
+			return false, err
+		}
+		for _, state := range states {
+			control := state.Control
+			if control == nil || control.ParentID != input.ThreadID || control.AgentID != event.AgentID || control.Outbox == nil {
+				continue
+			}
+			for _, part := range control.Outbox.Parts {
+				if part.Prompt == input.Prompt {
+					return true, nil
+				}
+			}
+		}
+	}
+	return false, nil
 }
