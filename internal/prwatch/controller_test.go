@@ -493,12 +493,36 @@ func TestStartDefaultsRejectsNegativeAndConflictingOptions(t *testing.T) {
 }
 
 func TestStartResumesMissingTicketOnlyWhenExplicit(t *testing.T) {
-	c, first := startedFixture(t)
+	now := specTime
+	c, err := NewController(t.TempDir(), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := c.Start(specParent, t.TempDir(), specPR, StartOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(bindLifetime + time.Nanosecond)
+	if _, err := c.Start(specParent, t.TempDir(), specPR, StartOptions{Reopened: true}); err == nil {
+		t.Fatal("expired unbound intent was reopened")
+	}
 	if err := os.Remove(first.TicketFile); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.Start(specParent, t.TempDir(), specPR, StartOptions{}); err == nil {
 		t.Fatal("missing ticket resumed implicitly")
+	}
+	if _, err := c.Start(specParent, t.TempDir(), specPR, StartOptions{Reopened: true}); err == nil {
+		t.Fatal("expired unbound intent recovered through a missing ticket")
+	}
+	store, err := c.Open(specParent, specPR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Data.Finished = true
+	store.Data.Control.Stage = Finished
+	if err := store.Save(); err != nil {
+		t.Fatal(err)
 	}
 	resumed, err := c.Start(specParent, t.TempDir(), specPR, StartOptions{Reopened: true})
 	if err != nil {
@@ -506,6 +530,47 @@ func TestStartResumesMissingTicketOnlyWhenExplicit(t *testing.T) {
 	}
 	if resumed.WatchID != first.WatchID || resumed.TicketFile != first.TicketFile || !resumed.Spawn {
 		t.Fatalf("wrong resumed intent: %#v", resumed)
+	}
+}
+
+func TestStartRejectsSymlinkedMembershipDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("managed POSIX state")
+	}
+	now := specTime
+	c, err := NewController(t.TempDir(), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Start(specParent, t.TempDir(), specPR, StartOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	starts := filepath.Join(c.Root, "parents", specParent, "starts")
+	if err := os.MkdirAll(starts, 0700); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	sentinel := filepath.Join(outside, specChild+".json")
+	old := Membership{ParentID: specParent, AgentID: specChild, TurnID: specWatch, ObservedAt: specTime}
+	raw, err := json.Marshal(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sentinel, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(starts); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, starts); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(25 * time.Hour)
+	if _, err := c.Start(specParent, t.TempDir(), "https://github.com/example/project/pull/8", StartOptions{}); err == nil {
+		t.Fatal("symlinked membership directory accepted")
+	}
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Fatalf("outside sentinel was removed: %v", err)
 	}
 }
 

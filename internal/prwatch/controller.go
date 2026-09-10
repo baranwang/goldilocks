@@ -278,6 +278,9 @@ func (c *Controller) resumeIntent(store *Store, ticketFile, parentID string, opt
 	if control == nil || control.ParentID != parentID {
 		return StartResult{}, errors.New("existing state is not a managed watch")
 	}
+	if control.AgentID == "" && control.Stage == Starting && c.Now().UTC().After(control.BindAfter.Add(bindLifetime)) {
+		return StartResult{}, errors.New("unbound watch intent expired")
+	}
 	if opts.Interval > 0 && interval != control.Interval || opts.Quiet > 0 && quiet != control.Quiet {
 		return StartResult{}, errors.New("duplicate start options conflict with existing intent")
 	}
@@ -382,7 +385,20 @@ func startResult(store *Store, ticketFile string, spawn bool) StartResult {
 }
 
 func (c *Controller) readMembership(parentID, agentID string) (Membership, error) {
-	path := filepath.Join(c.parentDir(parentID), "starts", agentID+".json")
+	startDir := filepath.Join(c.parentDir(parentID), "starts")
+	if err := c.validateManagedDir(startDir); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Membership{}, errors.New("child start was not observed")
+		}
+		return Membership{}, err
+	}
+	path := filepath.Join(startDir, agentID+".json")
+	if err := c.rejectSymlinkedFile(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Membership{}, errors.New("child start was not observed")
+		}
+		return Membership{}, err
+	}
 	var membership Membership
 	if err := readStrictJSON(path, &membership); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -450,10 +466,12 @@ func (c *Controller) parentStates(parentID string) ([]State, error) {
 
 func (c *Controller) cleanupStarts(parentID string) error {
 	startDir := filepath.Join(c.parentDir(parentID), "starts")
-	entries, err := os.ReadDir(startDir)
-	if errors.Is(err, os.ErrNotExist) {
+	if err := c.validateManagedDir(startDir); errors.Is(err, os.ErrNotExist) {
 		return nil
+	} else if err != nil {
+		return err
 	}
+	entries, err := os.ReadDir(startDir)
 	if err != nil {
 		return err
 	}
@@ -466,6 +484,9 @@ func (c *Controller) cleanupStarts(parentID string) error {
 			continue
 		}
 		path := filepath.Join(startDir, entry.Name())
+		if err := c.rejectSymlinkedFile(path); err != nil {
+			return err
+		}
 		var membership Membership
 		if err := readStrictJSON(path, &membership); err != nil {
 			return err
@@ -517,11 +538,32 @@ func waitFlock(path string) (func() error, error) {
 }
 
 func (c *Controller) ensureManagedDir(path string) error {
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return errors.New("managed directory is not a real directory")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	if err := os.MkdirAll(path, 0700); err != nil {
+		return err
+	}
+	if err := c.validateManagedDir(path); err != nil {
 		return err
 	}
 	if err := os.Chmod(path, 0700); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (c *Controller) validateManagedDir(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return errors.New("managed directory is not a real directory")
 	}
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {
