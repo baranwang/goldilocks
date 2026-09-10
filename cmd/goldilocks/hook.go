@@ -61,8 +61,8 @@ func RunHook(input io.Reader, output io.Writer, root string) error {
 			result["systemMessage"] = "Goldilocks PR watcher observation failed: " + observationErr.Error()
 		}
 		return json.NewEncoder(output).Encode(result)
-	case "SubagentStop":
-		decision, err := CheckStop(event)
+	case "Stop", "SubagentStop":
+		decision, err := managedStopDecision(event)
 		if err != nil {
 			return err
 		}
@@ -80,6 +80,23 @@ func RunHook(input io.Reader, output io.Writer, root string) error {
 	default:
 		return nil
 	}
+}
+
+func managedStopDecision(event HookEvent) (*prwatch.HookDecision, error) {
+	root, err := prwatch.DefaultControllerRoot()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(root); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	controller, err := prwatch.NewController(root, nil)
+	if err != nil {
+		return nil, err
+	}
+	return controller.StopDecision(event)
 }
 
 func observeManagedRuntime(event HookEvent) error {

@@ -59,32 +59,34 @@ type Delivery struct {
 }
 
 type Control struct {
-	WatchID          string              `json:"watch_id"`
-	ParentID         string              `json:"parent_id"`
-	AgentID          string              `json:"agent_id"`
-	Cwd              string              `json:"cwd"`
-	TicketSHA256     string              `json:"ticket_sha256"`
-	CreatedAt        time.Time           `json:"created_at"`
-	BindAfter        time.Time           `json:"bind_after"`
-	Stage            Stage               `json:"stage"`
-	Interval         time.Duration       `json:"interval"`
-	Quiet            time.Duration       `json:"quiet"`
-	InitialEventID   string              `json:"initial_event_id"`
-	InitialAccepted  bool                `json:"initial_accepted"`
-	RefreshRequired  bool                `json:"refresh_required"`
-	Ready            bool                `json:"ready"`
-	Worker           Execution           `json:"worker"`
-	Cycle            PollCycle           `json:"cycle"`
-	Outbox           *Delivery           `json:"outbox,omitempty"`
-	History          map[string]Delivery `json:"history"`
-	Progress         uint64              `json:"progress"`
-	LastStopProgress uint64              `json:"last_stop_progress"`
-	NoProgressStops  int                 `json:"no_progress_stops"`
-	FailureCode      string              `json:"failure_code"`
-	FailureDetail    string              `json:"failure_detail"`
-	FaultSeen        bool                `json:"fault_seen"`
-	ImportPath       string              `json:"import_path,omitempty"`
-	ImportSHA256     string              `json:"import_sha256,omitempty"`
+	WatchID               string              `json:"watch_id"`
+	ParentID              string              `json:"parent_id"`
+	AgentID               string              `json:"agent_id"`
+	Cwd                   string              `json:"cwd"`
+	TicketSHA256          string              `json:"ticket_sha256"`
+	CreatedAt             time.Time           `json:"created_at"`
+	BindAfter             time.Time           `json:"bind_after"`
+	Stage                 Stage               `json:"stage"`
+	Interval              time.Duration       `json:"interval"`
+	Quiet                 time.Duration       `json:"quiet"`
+	InitialEventID        string              `json:"initial_event_id"`
+	InitialAccepted       bool                `json:"initial_accepted"`
+	RefreshRequired       bool                `json:"refresh_required"`
+	Ready                 bool                `json:"ready"`
+	Worker                Execution           `json:"worker"`
+	Cycle                 PollCycle           `json:"cycle"`
+	Outbox                *Delivery           `json:"outbox,omitempty"`
+	History               map[string]Delivery `json:"history"`
+	Progress              uint64              `json:"progress"`
+	LastStopProgress      uint64              `json:"last_stop_progress"`
+	NoProgressStops       int                 `json:"no_progress_stops"`
+	ParentStopProgress    uint64              `json:"parent_stop_progress"`
+	ParentNoProgressStops int                 `json:"parent_no_progress_stops"`
+	FailureCode           string              `json:"failure_code"`
+	FailureDetail         string              `json:"failure_detail"`
+	FaultSeen             bool                `json:"fault_seen"`
+	ImportPath            string              `json:"import_path,omitempty"`
+	ImportSHA256          string              `json:"import_sha256,omitempty"`
 }
 
 type Action struct {
@@ -156,7 +158,8 @@ func validateControl(state State) error {
 	if !knownStage(c.Stage) {
 		return errors.New("control stage is invalid")
 	}
-	if c.Cycle.Failures < 0 || c.NoProgressStops < 0 || c.LastStopProgress > c.Progress {
+	if c.Cycle.Failures < 0 || c.NoProgressStops < 0 || c.ParentNoProgressStops < 0 ||
+		c.LastStopProgress > c.Progress || c.ParentStopProgress > c.Progress {
 		return errors.New("control counters are invalid")
 	}
 	if c.History == nil {

@@ -252,7 +252,7 @@ func TestUnrelatedRuntimeEventDoesNotCreateControllerState(t *testing.T) {
 	}
 }
 
-func TestHookManifestComposesPostToolUseWithExistingLaunchers(t *testing.T) {
+func TestHookManifestComposesManagedRuntimeHooksWithExistingLaunchers(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "hooks", "hooks.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -271,11 +271,16 @@ func TestHookManifestComposesPostToolUseWithExistingLaunchers(t *testing.T) {
 	}
 	post := manifest.Hooks["PostToolUse"]
 	start := manifest.Hooks["SubagentStart"]
+	stop := manifest.Hooks["Stop"]
+	childStop := manifest.Hooks["SubagentStop"]
 	if len(post) != 1 || len(post[0].Hooks) != 1 || post[0].Matcher != "mcp__codex_app__send_message_to_thread" ||
 		len(start) != 1 || len(start[0].Hooks) != 1 || post[0].Hooks[0].Command != start[0].Hooks[0].Command ||
 		post[0].Hooks[0].CommandWindows != start[0].Hooks[0].CommandWindows || post[0].Hooks[0].Timeout != 150 ||
-		post[0].Hooks[0].StatusMessage != "Recording PR watcher delivery" {
-		t.Fatalf("unexpected PostToolUse hook: %+v", post)
+		post[0].Hooks[0].StatusMessage != "Recording PR watcher delivery" || len(stop) != 1 || len(stop[0].Hooks) != 1 ||
+		len(childStop) != 1 || len(childStop[0].Hooks) != 1 || stop[0].Hooks[0].Command != childStop[0].Hooks[0].Command ||
+		stop[0].Hooks[0].CommandWindows != childStop[0].Hooks[0].CommandWindows || stop[0].Hooks[0].Timeout != childStop[0].Hooks[0].Timeout ||
+		stop[0].Hooks[0].StatusMessage != "Checking PR watcher startup" {
+		t.Fatalf("unexpected managed runtime hooks: post=%+v stop=%+v", post, stop)
 	}
 }
 

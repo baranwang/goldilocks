@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/baranwang/goldilocks/internal/prwatch"
 )
 
 const (
@@ -387,8 +390,24 @@ func TestWatcherCLIAndHookDispatch(t *testing.T) {
 	if code := RunCLI(context.Background(), args, strings.NewReader(""), &out, &diagnostics); code != 0 || !strings.Contains(out.String(), `"type":"register_ok"`) || diagnostics.Len() != 0 {
 		t.Fatalf("register CLI: %d %q %q", code, out.String(), diagnostics.String())
 	}
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	controller, err := prwatch.NewController(filepath.Join(home, "goldilocks", "pr-watch"), time.Now)
+	if err != nil {
+		t.Skipf("managed controller unsupported: %v", err)
+	}
+	started, err := controller.Start(testSessionID, cwd, testPRURL, prwatch.StartOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.ObserveStart(testSessionID, testAgentID, "00000000-0000-4000-8000-000000000003"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.Bind(started.TicketFile, testAgentID); err != nil {
+		t.Fatal(err)
+	}
 	out.Reset()
-	event, err := json.Marshal(HookEvent{Name: "SubagentStop", Cwd: cwd, SessionID: testSessionID, AgentID: testAgentID})
+	event, err := json.Marshal(HookEvent{Name: "SubagentStop", SessionID: testSessionID, AgentID: testAgentID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -396,7 +415,26 @@ func TestWatcherCLIAndHookDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), `"decision":"block"`) {
-		t.Fatalf("hook did not dispatch watcher guard: %s", out.String())
+		t.Fatalf("hook did not dispatch managed watcher guard: %s", out.String())
+	}
+	out.Reset()
+	event, err = json.Marshal(HookEvent{Name: "Stop", SessionID: testSessionID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RunHook(bytes.NewReader(event), &out, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"decision":"block"`) {
+		t.Fatalf("hook did not dispatch parent startup guard: %s", out.String())
+	}
+	out.Reset()
+	event, err = json.Marshal(HookEvent{Name: "SubagentStop", SessionID: testSessionID, AgentID: "00000000-0000-4000-8000-000000000009"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RunHook(bytes.NewReader(event), &out, ""); err != nil || out.Len() != 0 {
+		t.Fatalf("unmanaged child hook was not a no-op: %v %q", err, out.String())
 	}
 	for _, bad := range [][]string{{"watcher"}, {"watcher", "unknown"}, {"watcher", "finish"}} {
 		out.Reset()
