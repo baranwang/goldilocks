@@ -1,4 +1,4 @@
-// Build and verify CLI release assets. Run from the repository root.
+// Verify GoReleaser assets and native launcher behavior. Run from the repository root.
 package main
 
 import (
@@ -28,15 +28,17 @@ var targets = []target{
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "goldilocks build:", err)
+		fmt.Fprintln(os.Stderr, "goldilocks verify:", err)
 		os.Exit(1)
 	}
 }
 
 func run() error {
-	checkOnly := len(os.Args) == 2 && os.Args[1] == "--check"
-	if len(os.Args) != 1 && !checkOnly {
-		return errors.New("usage: go run ./scripts/build.go [--check]")
+	if len(os.Args) == 3 && os.Args[1] == "--binary" {
+		return checkBinary(os.Args[2])
+	}
+	if len(os.Args) != 1 {
+		return errors.New("usage: go run ./scripts/verify.go [--binary PATH]")
 	}
 	raw, err := os.ReadFile(".codex-plugin/plugin.json")
 	if err != nil {
@@ -50,11 +52,6 @@ func run() error {
 	if version == "" || strings.ContainsAny(version, " \t\r\n") {
 		return errors.New("invalid manifest version")
 	}
-	if !checkOnly {
-		if err := build(version); err != nil {
-			return err
-		}
-	}
 	if err := check(); err != nil {
 		return err
 	}
@@ -67,55 +64,29 @@ func run() error {
 	return nil
 }
 
-func build(version string) error {
-	stage, err := os.MkdirTemp("", "goldilocks-build-")
+// Used by GoReleaser's release-only post-build hook before publication.
+func checkBinary(path string) error {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(stage)
-	for _, t := range targets {
-		output := filepath.Join(stage, t.Dir, t.Name)
-		if err := os.MkdirAll(filepath.Dir(output), 0755); err != nil {
-			return err
-		}
-		cmd := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-ldflags=-s -w -X main.version="+version, "-o", output, "./cmd/goldilocks")
-		cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOTOOLCHAIN=go1.25.6", "GOOS="+t.OS, "GOARCH="+t.Arch)
-		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("build %s: %w", t.Dir, err)
-		}
-	}
-	var sums []string
-	for _, t := range targets {
-		data, err := os.ReadFile(filepath.Join(stage, t.Dir, t.Name))
-		if err != nil {
-			return err
-		}
-		path := filepath.Join("bin", "goldilocks-"+t.Dir+strings.TrimPrefix(t.Name, "goldilocks"))
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(path, data, 0755); err != nil {
-			return err
-		}
-		if err := os.Chmod(path, 0755); err != nil {
-			return err
-		}
-		digest := sha256.Sum256(data)
-		sums = append(sums, fmt.Sprintf("%x  %s", digest, filepath.Base(path)))
-	}
-	sort.Strings(sums)
-	manifest := []byte(strings.Join(sums, "\n") + "\n")
-	if err := os.WriteFile("bin/SHA256SUMS", manifest, 0644); err != nil {
+	pinned, err := os.ReadFile("scripts/SHA256SUMS")
+	if err != nil {
 		return err
 	}
-	return os.WriteFile("scripts/SHA256SUMS", manifest, 0644)
+	want := fmt.Sprintf("%x  %s", sha256.Sum256(data), filepath.Base(path))
+	for _, line := range strings.Split(string(pinned), "\n") {
+		if line == want {
+			return nil
+		}
+	}
+	return fmt.Errorf("pinned SHA256SUMS mismatch: %s", path)
 }
 
 func check() error {
 	var sums []string
 	for _, t := range targets {
-		path := filepath.Join("bin", "goldilocks-"+t.Dir+strings.TrimPrefix(t.Name, "goldilocks"))
+		path := filepath.Join("dist", "goldilocks-"+t.Dir+strings.TrimPrefix(t.Name, "goldilocks"))
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
@@ -138,8 +109,19 @@ func check() error {
 	if err != nil {
 		return err
 	}
-	if !bytes.Equal(actual, []byte(strings.Join(sums, "\n")+"\n")) {
+	pinned := strings.FieldsFunc(string(actual), func(r rune) bool { return r == '\n' || r == '\r' })
+	sort.Strings(pinned)
+	if strings.Join(pinned, "\n") != strings.Join(sums, "\n") {
 		return errors.New("scripts/SHA256SUMS mismatch")
+	}
+	generated, err := os.ReadFile("dist/SHA256SUMS")
+	if err != nil {
+		return err
+	}
+	entries := strings.FieldsFunc(string(generated), func(r rune) bool { return r == '\n' || r == '\r' })
+	sort.Strings(entries)
+	if strings.Join(entries, "\n") != strings.Join(sums, "\n") {
+		return errors.New("GoReleaser SHA256SUMS mismatch")
 	}
 	fmt.Println("verified six release executable formats and SHA256SUMS")
 	return nil
@@ -158,7 +140,7 @@ func smoke(t target, version string) error {
 	}
 	dataDir := filepath.Join(root, "data")
 	binary := filepath.Join(dataDir, "bin", version, t.Dir, t.Name)
-	asset := filepath.Join("bin", "goldilocks-"+t.Dir+strings.TrimPrefix(t.Name, "goldilocks"))
+	asset := filepath.Join("dist", "goldilocks-"+t.Dir+strings.TrimPrefix(t.Name, "goldilocks"))
 	for _, path := range []string{asset, "scripts/goldilocks.sh", "scripts/goldilocks.ps1", "scripts/SHA256SUMS", ".codex-plugin/plugin.json", filepath.Join("skills", "model-routing", "SKILL.md")} {
 		data, err := os.ReadFile(path)
 		if err != nil {

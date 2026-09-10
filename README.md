@@ -103,17 +103,29 @@ not a zero-cost daemon.
 
 ## Binary releases
 
-`bin/` is a local build output, not tracked source. Run
-`go run ./scripts/build.go` with Go 1.25.6 to build all six platforms, regenerate
-`scripts/SHA256SUMS`, and verify native launcher/hook behavior. Commit the
-checksum update alongside any Go source or plugin-version change. CI rebuilds
-and rejects a mismatch with the committed checksums.
+[GoReleaser](https://goreleaser.com/) v2.18.1 builds and publishes the six
+executables using `.goreleaser.yaml` and Go 1.25.6. Build outputs live in ignored
+`dist/`; executables are not tracked in Git. To build locally and refresh the
+pinned checksums after a Go source or plugin-version change:
+
+```bash
+GOLDILOCKS_VERSION=$(jq -r .version .codex-plugin/plugin.json) goreleaser release --snapshot --clean
+cp dist/SHA256SUMS scripts/SHA256SUMS
+GOTOOLCHAIN=go1.25.6 go run ./scripts/verify.go
+```
+
+Commit the checksum update with the source/version change. CI builds snapshots
+on Linux, macOS, and Windows, verifies all six assets against the committed
+checksums, and exercises the native launcher and all three hook commands.
 
 After validation, push a tag matching the plugin version (for example,
-`v0.2.0`). The Release workflow waits for the Linux, macOS, and Windows checks, then
-verifies the pinned assets before publishing six executables and SHA256SUMS to GitHub Releases. Publish those
-assets before distributing the matching plugin version. Releases must remain
-available and immutable for that plugin version; there is no `latest` fallback.
+`v0.2.0`). The Release workflow waits for all three systems, then GoReleaser
+builds and publishes the executables and `SHA256SUMS`. A post-build hook checks
+each executable against the pinned manifest before publication; a mismatch
+aborts the release. Snapshots never publish and allow checksum regeneration.
+Publish the assets before distributing the matching plugin version. Releases
+must remain available and immutable for that version; there is no `latest`
+fallback.
 
 POSIX downloads use a directory lock and clean it up on normal failure or
 interruption. A hard-killed downloader can leave `download.lock`; after checking

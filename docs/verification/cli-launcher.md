@@ -6,16 +6,19 @@ version and native platform, download one executable from the matching GitHub
 Release, verify the source-controlled `scripts/SHA256SUMS`, and atomically place
 it in a version/platform cache. All hook and PR watch business logic remains Go.
 
-The source tree no longer tracks `bin/`. `scripts/build.go` generates release
-assets and the pinned checksums using Go 1.25.6. CI rebuilds and rejects checksum
-changes; pushing a matching `v*` tag triggers verified asset publication.
+The source tree no longer tracks binaries. GoReleaser v2.18.1 generates six
+release assets and `dist/SHA256SUMS` using Go 1.25.6. `scripts/verify.go` checks
+those assets against the pinned manifest and exercises native hooks. CI builds
+snapshots on three systems; matching `v*` tags use GoReleaser to publish only
+after validation. Release-only post-build hooks reject unpinned binaries.
 
 ## Local checks — 2026-09-10, macOS arm64, Go 1.25.6
 
 Passed:
 
 - `go test -race ./...`: existing business regressions plus real launcher tests.
-- `go run ./scripts/build.go`: six release formats/hashes and native warm-cache
+- GoReleaser snapshot + `go run ./scripts/verify.go`: six unchanged release
+  formats/hashes and native warm-cache
   execution of all three configured hook commands, from a different working
   directory and plugin/cache paths containing spaces.
 - Launcher tests replace only the external curl download with a native fixture.
@@ -25,6 +28,10 @@ Passed:
   and the child's nonzero exit status.
 - Invalid pinned metadata fails before hook execution, even with a populated
   cache. Business tests and their fixture data remain unchanged.
+- A GoReleaser release dry run in an isolated temporary Git repository passed
+  with publication disabled. Replacing one pinned digest made the post-build
+  hook abort before packaging/publication. No repository tag or Release was
+  created by this check.
 
 ## Cross-platform fixes verified during CI
 
@@ -42,7 +49,9 @@ restoring only Go sources to LF reproduced the pinned
 `.gitattributes` now pins Go source to LF; checksum comparison remains strict.
 
 The release workflow reuses the complete three-OS CI matrix and can publish
-only after all jobs pass. `actionlint` validates both workflows.
+only after all jobs pass. GoReleaser builds, generates checksums, and publishes;
+the release-only post-build checksum gate runs before upload. `actionlint`
+validates both workflows.
 
 ## Remaining boundaries
 

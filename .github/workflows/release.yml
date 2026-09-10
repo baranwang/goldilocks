@@ -14,15 +14,17 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.6'
+          cache: false
       - name: Verify tag matches plugin version
         run: test "$GITHUB_REF_NAME" = "v$(jq -r .version .codex-plugin/plugin.json)"
-      - uses: actions/download-artifact@v4
+      - uses: goreleaser/goreleaser-action@v7
         with:
-          name: goldilocks-release-assets
-          path: bin/
-      - name: Verify release artifacts against pinned checksums
-        run: cd bin && sha256sum --check ../scripts/SHA256SUMS
-      - name: Publish binaries and checksums
+          version: v2.18.1
+          args: release --clean
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" bin/goldilocks-* bin/SHA256SUMS --verify-tag --generate-notes
+          GITHUB_TOKEN: ${{ github.token }}
