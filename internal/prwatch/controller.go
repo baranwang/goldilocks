@@ -527,7 +527,7 @@ func (c *Controller) withParentLock(parentID string, fn func() error) error {
 }
 
 func waitFlock(path string) (func() error, error) {
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(time.Second)
 	for {
 		release, err := flock(path)
 		if !errors.Is(err, ErrLocked) || time.Now().After(deadline) {

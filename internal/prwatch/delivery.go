@@ -3,6 +3,7 @@ package prwatch
 import (
 	"errors"
 	"fmt"
+	"os"
 	"time"
 )
 
@@ -101,6 +102,13 @@ func (c *Controller) AcceptSend(send ObservedSend) error {
 		!validUUID(send.AgentID) || !validUUID(send.ParentID) {
 		return nil
 	}
+	parentDir := c.parentDir(send.ParentID)
+	if err := c.validateManagedDir(parentDir); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	deadline := time.Now().Add(time.Second)
 	return c.withParentLock(send.ParentID, func() error {
 		states, err := c.parentStates(send.ParentID)
 		if err != nil {
@@ -115,11 +123,17 @@ func (c *Controller) AcceptSend(send ObservedSend) error {
 				return err
 			}
 			matched := false
-			err = managedUpdate(store, func(tx *Store) error {
-				var err error
-				matched, err = tx.acceptSend(send)
-				return err
-			})
+			for {
+				err = store.Update(func(tx *Store) error {
+					var err error
+					matched, err = tx.acceptSend(send)
+					return err
+				})
+				if !errors.Is(err, ErrLocked) || !time.Now().Before(deadline) {
+					break
+				}
+				time.Sleep(time.Millisecond)
+			}
 			if err != nil || matched {
 				return err
 			}
