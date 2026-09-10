@@ -246,7 +246,9 @@ func (c *Controller) Bind(ticketFile, agentID string) (*Store, error) {
 					return errors.New("ticket is not authorized for this child")
 				}
 				control.AgentID = agentID
-				control.Stage = Initializing
+				if control.Stage != Stopping {
+					control.Stage = Initializing
+				}
 				control.Progress++
 				return nil
 			})
@@ -431,11 +433,15 @@ func (c *Controller) hasUnboundIntent(parentID string) (bool, error) {
 		return false, err
 	}
 	for _, state := range states {
-		if state.Control != nil && state.Control.AgentID == "" && state.Control.Stage == Starting {
+		if state.Control != nil && state.Control.AgentID == "" && acceptsBinding(state.Control.Stage) {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+func acceptsBinding(stage Stage) bool {
+	return stage == Starting || stage == Stopping
 }
 
 func (c *Controller) parentStates(parentID string) ([]State, error) {

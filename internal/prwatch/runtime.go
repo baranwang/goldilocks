@@ -198,7 +198,7 @@ func RuntimeManaged(root string, event RuntimeEvent) (bool, error) {
 		for _, state := range states {
 			control := state.Control
 			if control != nil && control.ParentID == event.SessionID && control.AgentID == "" &&
-				control.Stage == Starting && !now.After(control.BindAfter.Add(bindLifetime)) {
+				acceptsBinding(control.Stage) && !now.After(control.BindAfter.Add(bindLifetime)) {
 				return true, nil
 			}
 		}

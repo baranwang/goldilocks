@@ -226,6 +226,18 @@ func TestWindowsManagedDiagnosticRequiresMatchingIntent(t *testing.T) {
 	}
 }
 
+func TestWindowsStopHookIsInertWhenControllerRootExists(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, "goldilocks", "pr-watch"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	decision, err := managedStopDecisionOn(HookEvent{Name: "Stop", SessionID: runtimeParent}, "windows")
+	if err != nil || decision != nil {
+		t.Fatal("unsupported Windows stop hook was not inert", decision, err)
+	}
+}
+
 func mustJSON(t *testing.T, value string) string {
 	t.Helper()
 	raw, err := json.Marshal(value)

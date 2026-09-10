@@ -173,7 +173,7 @@ func (c *Controller) parentStopDecision(parentID string) (*HookDecision, error) 
 		}
 	}
 	if blockReason != "" {
-		return &HookDecision{Decision: "block", Reason: blockReason}, nil
+		return &HookDecision{Decision: "block", Reason: blockReason, SystemMessage: warning}, nil
 	}
 	if warning != "" {
 		return &HookDecision{SystemMessage: warning}, nil
@@ -305,7 +305,14 @@ func (c *Controller) Resume(parentID, prURL string, replace bool) (StartResult, 
 	}
 	control := state.Control
 	ticketFile := ticketPath(store.Path)
-	rotate := replace || control.AgentID == ""
+	stopPending := false
+	if _, err := os.Stat(store.StopPath); err == nil {
+		stopPending = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return StartResult{}, err
+	}
+	rotate := replace || control.AgentID == "" && control.Stage == NeedsAttention
+	spawn := rotate || stopPending && control.AgentID == ""
 	if !rotate {
 		ticket, stateFile, err := c.readManagedTicket(ticketFile)
 		if err != nil || stateFile != store.Path || !ticketMatches(state, ticket) {
@@ -314,6 +321,9 @@ func (c *Controller) Resume(parentID, prURL string, replace bool) (StartResult, 
 			}
 			return StartResult{}, fmt.Errorf("verified child ticket: %w; use replace", err)
 		}
+	}
+	if control.AgentID == "" && control.Stage == Starting && !stopPending && !replace {
+		return startResult(store, ticketFile, false), nil
 	}
 
 	var ticket Ticket
@@ -326,12 +336,6 @@ func (c *Controller) Resume(parentID, prURL string, replace bool) (StartResult, 
 			return StartResult{}, err
 		}
 	}
-	stopPending := false
-	if _, err := os.Stat(store.StopPath); err == nil {
-		stopPending = true
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return StartResult{}, err
-	}
 	err = store.Update(func(tx *Store) error {
 		control := tx.Data.Control
 		if control.ParentID != parentID {
@@ -341,9 +345,13 @@ func (c *Controller) Resume(parentID, prURL string, replace bool) (StartResult, 
 			control.TicketSHA256 = digest(ticket.Nonce)
 			control.AgentID = ""
 			control.BindAfter = c.Now().UTC()
-			control.Stage = Starting
-		} else if stopPending {
+		} else if stopPending && control.AgentID == "" {
+			control.BindAfter = c.Now().UTC()
+		}
+		if stopPending {
 			control.Stage = Stopping
+		} else if rotate {
+			control.Stage = Starting
 		} else {
 			control.Stage = Initializing
 		}
@@ -363,7 +371,7 @@ func (c *Controller) Resume(parentID, prURL string, replace bool) (StartResult, 
 	if err != nil {
 		return StartResult{}, err
 	}
-	return startResult(store, ticketFile, rotate), nil
+	return startResult(store, ticketFile, spawn), nil
 }
 
 func (c *Controller) managedStatePaths(parentID string) ([]string, error) {

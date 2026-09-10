@@ -496,7 +496,7 @@ func TestResumeReplacementRotatesTicketAndPreservesPending(t *testing.T) {
 	}
 }
 
-func TestResumeRejectsLiveWorkerAndKeepsUserStop(t *testing.T) {
+func TestResumeRejectsLiveWorker(t *testing.T) {
 	t.Run("live worker", func(t *testing.T) {
 		c, result, store := boundFixture(t)
 		release, err := store.Lock(false)
@@ -521,23 +521,93 @@ func TestResumeRejectsLiveWorkerAndKeepsUserStop(t *testing.T) {
 			t.Fatal("rejected resume changed state")
 		}
 	})
-	t.Run("pending user stop", func(t *testing.T) {
-		c, _, store := boundFixture(t)
-		if err := c.Stop(specParent, specPR); err != nil {
-			t.Fatal(err)
-		}
-		resumed, err := c.Resume(specParent, specPR, false)
-		if err != nil || resumed.Spawn {
-			t.Fatal(resumed, err)
-		}
-		state, err := ReadState(store.Path)
-		if err != nil || state.Control.Stage != Stopping {
-			t.Fatal(state.Control, err)
-		}
-		if _, err := os.Stat(store.StopPath); err != nil {
-			t.Fatal("resume cleared the user stop", err)
-		}
-	})
+}
+
+func TestResumeUserStopAlwaysContinuesStopping(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		bound   bool
+		replace bool
+	}{
+		{name: "bound keep child", bound: true},
+		{name: "bound replace child", bound: true, replace: true},
+		{name: "unbound keep ticket"},
+		{name: "unbound replace ticket", replace: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var c *Controller
+			var result StartResult
+			var store *Store
+			if tc.bound {
+				c, result, store = boundFixture(t)
+			} else {
+				c, result = startedFixture(t)
+				var err error
+				store, err = c.Open(specParent, specPR)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			ticketBefore, err := os.ReadFile(result.TicketFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !tc.bound {
+				c.Now = func() time.Time { return specTime.Add(bindLifetime + time.Minute) }
+			}
+			if err := c.Stop(specParent, specPR); err != nil {
+				t.Fatal(err)
+			}
+			resumed, err := c.Resume(specParent, specPR, tc.replace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantSpawn := tc.replace || !tc.bound
+			if resumed.Spawn != wantSpawn {
+				t.Fatal("wrong stop-completion spawn decision", resumed)
+			}
+			ticketAfter, err := os.ReadFile(result.TicketFile)
+			if err != nil || bytes.Equal(ticketBefore, ticketAfter) == tc.replace {
+				t.Fatal("wrong stop-completion ticket decision", err)
+			}
+			state, err := ReadState(store.Path)
+			if err != nil || state.Control.Stage != Stopping {
+				t.Fatal("resume left stopping state", state.Control, err)
+			}
+			if _, err := os.Stat(store.StopPath); err != nil {
+				t.Fatal("resume cleared the user stop", err)
+			}
+
+			agentID := state.Control.AgentID
+			if agentID == "" {
+				agentID = "00000000-0000-4000-8000-000000000009"
+				if err := c.ObserveStart(specParent, agentID, specWatch); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := c.Bind(resumed.TicketFile, agentID); err != nil {
+					t.Fatal(err)
+				}
+				state, err = ReadState(store.Path)
+				if err != nil || state.Control.Stage != Stopping {
+					t.Fatal("binding restarted a stopped watch", state.Control, err)
+				}
+			}
+			reads := 0
+			action, err := c.Advance(context.Background(), resumed.TicketFile, agentID, Dependencies{
+				Read: func(context.Context, PR, func() bool) (Snapshot, error) {
+					reads++
+					return nil, errors.New("GitHub read after user stop")
+				},
+				Now: c.Now,
+				Wait: func(context.Context, time.Duration) error {
+					return errors.New("wait after user stop")
+				},
+			})
+			if err != nil || action.Action != "send" || reads != 0 {
+				t.Fatal("resume restarted polling instead of finishing stop", action, reads, err)
+			}
+		})
+	}
 }
 
 func TestResumeUnboundFailureRotatesWithoutReplaceFlag(t *testing.T) {
@@ -565,6 +635,33 @@ func TestResumeUnboundFailureRotatesWithoutReplaceFlag(t *testing.T) {
 	after, err := os.ReadFile(result.TicketFile)
 	if err != nil || bytes.Equal(before, after) {
 		t.Fatal("unbound failed startup reused its nonce", err)
+	}
+}
+
+func TestResumeLiveUnboundStartupPreservesExistingIntent(t *testing.T) {
+	c, result := startedFixture(t)
+	ticketBefore, err := os.ReadFile(result.TicketFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateBefore, err := os.ReadFile(result.StateFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := c.Resume(specParent, specPR, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ticketAfter, err := os.ReadFile(result.TicketFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateAfter, err := os.ReadFile(result.StateFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.Spawn || resumed.AgentID != "" || !bytes.Equal(ticketBefore, ticketAfter) || !bytes.Equal(stateBefore, stateAfter) {
+		t.Fatal("ordinary resume replaced a live unbound startup", resumed)
 	}
 }
 
@@ -624,6 +721,27 @@ func TestCorruptManagedStateWarnsParentButDoesNotBlockExactChild(t *testing.T) {
 	after, err := os.ReadFile(other.StateFile)
 	if err != nil || !bytes.Equal(after, corrupt) {
 		t.Fatal("corrupt state was rewritten", err)
+	}
+}
+
+func TestParentBlockIncludesCorruptSiblingWarning(t *testing.T) {
+	c, _ := startedFixture(t)
+	corruptWatch, err := c.Start(specParent, t.TempDir(), "https://github.com/example/project/pull/8", StartOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	corrupt := []byte("{corrupt")
+	if err := os.WriteFile(corruptWatch.StateFile, corrupt, 0600); err != nil {
+		t.Fatal(err)
+	}
+	decision, err := c.StopDecision(RuntimeEvent{Name: "Stop", SessionID: specParent})
+	if err != nil || decision == nil || decision.Decision != "block" ||
+		!strings.Contains(decision.SystemMessage, corruptWatch.StateFile) {
+		t.Fatal("blocking watch discarded corrupt sibling warning", decision, err)
+	}
+	after, err := os.ReadFile(corruptWatch.StateFile)
+	if err != nil || !bytes.Equal(after, corrupt) {
+		t.Fatal("corrupt sibling was rewritten", err)
 	}
 }
 

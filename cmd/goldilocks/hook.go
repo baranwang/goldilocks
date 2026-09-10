@@ -83,6 +83,13 @@ func RunHook(input io.Reader, output io.Writer, root string) error {
 }
 
 func managedStopDecision(event HookEvent) (*prwatch.HookDecision, error) {
+	return managedStopDecisionOn(event, runtime.GOOS)
+}
+
+func managedStopDecisionOn(event HookEvent, goos string) (*prwatch.HookDecision, error) {
+	if goos == "windows" {
+		return nil, nil
+	}
 	root, err := prwatch.DefaultControllerRoot()
 	if err != nil {
 		return nil, err
