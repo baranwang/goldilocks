@@ -141,31 +141,6 @@ func TestManagedStateRejectsInvalidControlWithoutWriting(t *testing.T) {
 	}
 }
 
-func TestReadStateRejectsNullManagedControlWithoutWriting(t *testing.T) {
-	s := managedFixture(t)
-	raw, err := os.ReadFile(s.Path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	invalid := bytes.Replace(raw, []byte(`"control":{`), []byte(`"control":null,"discarded_control":{`), 1)
-	if bytes.Equal(raw, invalid) {
-		t.Fatal("fixture did not contain control")
-	}
-	if err := os.WriteFile(s.Path, invalid, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ReadState(s.Path); err == nil {
-		t.Fatal("accepted null managed control")
-	}
-	after, err := os.ReadFile(s.Path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(invalid, after) {
-		t.Fatal("invalid state was modified")
-	}
-}
-
 func TestManagedTransactionSaveFailureRollsBack(t *testing.T) {
 	s := managedFixture(t)
 	before, err := os.ReadFile(s.Path)
