@@ -44,7 +44,7 @@ Goldilocks 保留插件总名称，同时提供 `model-routing` 和 `pr-watch` �
 - 所有消息分段成功后才 ack；待发送事件及已经 prepare 的 manifest 不得被后续观察或版本升级改写。
 - 无变化时无限等待；变化后等待可重置的静默窗口；没有最长批次等待时限；感知到终态或控制/故障出口时不等剩余窗口。
 - 单次工具等待不超过 `60` 秒；GitHub 单次请求超时保持 `45` 秒，连续 `3` 次失败产生错误通知，退避上限保持 `300` 秒。
-- PR 回归测试以 Go `*_test.go` 放在根目录 `__tests__/pr-watch`；测试命令显式包含该目录，skill 目录不携带测试或 Python helper。
+- PR 回归测试以 Go `*_test.go` 就近放在 `internal/prwatch`；完整测试使用 `go test ./...`，skill 目录不携带测试或 Python helper。
 - 保留英文、简体中文、繁体中文 README、互相切换的语言链接、logo 和 license。
 - 外部 PR 正文、评论、reviews、CI 日志均是证据，不提供修改代码、回复、resolve、push 或 merge 的新增授权。
 - 不写 hook 信任元数据，不覆盖用户全局 hooks，不把模拟输入或 fixture 投递写成真实运行时验收。
@@ -110,8 +110,8 @@ internal/prwatch/changes.go              基线和逐次 delta、删除证据
 internal/prwatch/watch.go                collecting、静默计时与出口
 internal/prwatch/message.go              Markdown、Unicode 分段、manifest
 internal/prwatch/cli.go                  六个 PR action 的参数与输出
-__tests__/pr-watch/*_test.go              原 20 个场景及新增 Go 回归
-__tests__/pr-watch/testdata/              v2 JSON 与 GitHub 响应 fixture
+internal/prwatch/*_test.go                原 20 个场景及新增 Go 回归
+internal/prwatch/testdata/                v2 JSON 与 GitHub 响应 fixture
 go.mod                                   Go 标准库项目
 scripts/build.go                         交叉编译、校验清单、native smoke
 bin/<平台目录>/goldilocks[.exe]            包含全部命令的同一个 CLI
@@ -121,7 +121,7 @@ docs/verification/pr-watch-runtime.md     已实测范围与剩余门槛
 README.md / README.zh-hans.md / README.zh-hant.md
 ```
 
-没有 scripts/watch_pr.py、Python 测试或 Python 构建脚本交付。Go 工具的 ./... 默认忽略以 _ 开头的目录，因此完整测试命令为 `go test ./... ./__tests__/pr-watch`。原 shell/PowerShell 业务脚本在二进制可安装后删除；宿主 command 只负责选择平台文件并传入 hook 参数。探针与临时项目 hooks 不进入发布包。
+没有 scripts/watch_pr.py、Python 测试或 Python 构建脚本交付。Go 测试与被测包同目录，因此完整测试命令为 `go test ./...`。原 shell/PowerShell 业务脚本在二进制可安装后删除；宿主 command 只负责选择平台文件并传入 hook 参数。探针与临时项目 hooks 不进入发布包。
 
 ## 5. 主任务与 watcher 的协作
 
@@ -247,7 +247,7 @@ Windows 架构选择应覆盖原生 ARM64、AMD64 以及 Windows PowerShell 的�
 
 ## 11. 迁移与回滚
 
-源仓库的入口、展示与 watcher reference 迁入 skills/pr-watch；Python 实现与测试只作行为对照，不复制进新插件。20 个既有回归场景在根目录 __tests__/pr-watch 用 Go 测试覆盖，并逐项建立来源映射。先完成行为和存量状态兼容，再切换 SOP 的可执行命令。已有开发 symlink 如存在，目标应改为新来源；操作前确认实际链接与目标，不照搬旧电脑路径，不删除其他 skill。
+源仓库的入口、展示与 watcher reference 迁入 skills/pr-watch；Python 实现与测试只作行为对照，不复制进新插件。20 个既有回归场景在 internal/prwatch 用 Go 测试覆盖，并逐项建立来源映射。先完成行为和存量状态兼容，再切换 SOP 的可执行命令。已有开发 symlink 如存在，目标应改为新来源；操作前确认实际链接与目标，不照搬旧电脑路径，不删除其他 skill。
 
 先完成 Goldilocks 验收与可安装版本，再准备旧 skills 仓库的迁移说明和删除实现/测试的配套变更。旧来源未切换前允许短期并存；切换后只维护 Goldilocks 一份实现。旧仓库 README 保留新安装链接和差异说明，不能提前删除交接源码。执行旧仓库 push/合并仍遵循用户已有授权，不因完成文档而发布。
 

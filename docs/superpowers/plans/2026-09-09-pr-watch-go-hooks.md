@@ -24,7 +24,7 @@
 - 所有消息分段成功后才 ack；待发送事件及已经 prepare 的 manifest 不得被后续观察或版本升级改写。
 - 无变化时无限等待；变化后等待可重置的静默窗口；没有最长批次等待时限；感知到终态或控制/故障出口时不等剩余窗口。
 - 单次工具等待不超过 `60` 秒；GitHub 单次请求超时保持 `45` 秒，连续 `3` 次失败产生错误通知，退避上限保持 `300` 秒。
-- PR 回归测试以 Go `*_test.go` 放在根目录 `__tests__/pr-watch`；测试命令显式包含该目录，skill 目录不携带测试或 Python helper。
+- PR 回归测试以 Go `*_test.go` 就近放在 `internal/prwatch`；完整测试使用 `go test ./...`，skill 目录不携带测试或 Python helper。
 - 保留英文、简体中文、繁体中文 README、互相切换的语言链接、logo 和 license。
 - 外部 PR 正文、评论、reviews、CI 日志均是证据，不提供修改代码、回复、resolve、push 或 merge 的新增授权。
 - 不写 hook 信任元数据，不覆盖用户全局 hooks，不把模拟输入或 fixture 投递写成真实运行时验收。
@@ -45,14 +45,14 @@
 | cmd/goldilocks/watcher.go、watcher_test.go | 登记与停止检查 | 8 |
 | scripts/build.go、bin/、hooks/hooks.json、.github/workflows/ci.yml | Go 构建、六个平台和安装入口 | 9 |
 | skills/pr-watch/ 三份文档、三种 README、manifest | 实际 CLI 使用协议 | 10 |
-| __tests__/pr-watch/*_test.go、testdata/ | 各任务的 Go 行为测试 | 4–7、9 |
+| internal/prwatch/*_test.go、testdata/ | 各任务的 Go 行为测试 | 4–7、9 |
 | 旧 skills 仓库 README、pr-watch/、__tests__/pr-watch/ | 延后切换维护来源 | 12 |
 
 顺序：1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12。Task 4/5 分别完成可测试的状态与 collector，Task 6 接入时间行为，Task 7 对外开放 PR 子命令。Task 9 之前现有生产 hook 继续运行旧脚本；不交付引用缺失二进制的安装配置。
 
 执行时使用隔离 checkout 或按 using-git-worktrees 建立隔离，保留用户未提交文件。Git 身份如需设置，仅在该仓库设为 baranwang <me@baran.wang>。下列命令从实施仓库根目录运行；rtk proxy 是本机约定，其他机器可直接运行其后的程序。
 
-Go 的 ./... 忽略 __tests__，所有完整检查必须用 `go test ./... ./__tests__/pr-watch`。后续代码块是指定文件中的声明或替换片段，按引用补充标准库 import；PR 外部测试统一 package prwatch_test，并以 pw 导入 github.com/baranwang/goldilocks/internal/prwatch。
+Go 测试与被测包同目录，所有完整检查使用 `go test ./...`。后续代码块是指定文件中的声明或替换片段，按引用补充标准库 import；PR 外部测试统一 package prwatch_test，并以 pw 导入 github.com/baranwang/goldilocks/internal/prwatch。
 
 ## Task 1: 固化运行时证据与发布门槛
 
@@ -321,7 +321,7 @@ rtk git commit -m "feat(hooks): add Go routing injector" -m "Co-authored-by: Cod
 
 ## Task 4: Go 状态存储、v2 兼容与原锁互斥
 
-**Files:** Create internal/prwatch/types.go、state.go、lock_unix.go、lock_windows.go；__tests__/pr-watch/state_test.go、testdata/v2-pending.json。
+**Files:** Create internal/prwatch/types.go、state.go、lock_unix.go、lock_windows.go；internal/prwatch/state_test.go、testdata/v2-pending.json。
 
 **Interfaces:**
 - Consumes: 固定源码的 JSON v2、规范化 PR URL、原 .json/.lock/.stop 文件名。
@@ -413,7 +413,7 @@ func TestV2PendingAndManifestSurviveUpgrade(t *testing.T) {
 - [ ] **Step 2: 运行失败用例。**
 
 ```sh
-rtk proxy go test ./__tests__/pr-watch -run TestV2 -v
+rtk proxy go test ./internal/prwatch -run TestV2 -v
 ```
 
 Expected: 缺少 State/NewStore/Lock 等实现，或旧 manifest 被重写。
@@ -494,15 +494,15 @@ func TestLockRevalidatesAndRemainsExclusive(t *testing.T) {
 - [ ] **Step 6: 通过 Go 检查并提交。**
 
 ```sh
-rtk proxy gofmt -w internal/prwatch __tests__/pr-watch
-rtk proxy go test ./... ./__tests__/pr-watch
-rtk git add internal/prwatch __tests__/pr-watch
+rtk proxy gofmt -w internal/prwatch
+rtk proxy go test ./...
+rtk git add internal/prwatch
 rtk git commit -m "feat(pr-watch): port durable state and locks to Go" -m "Co-authored-by: Codex <noreply@openai.com>"
 ```
 
 ## Task 5: 迁移 GitHub collector 与变化识别
 
-**Files:** Create internal/prwatch/github.go、changes.go；__tests__/pr-watch/github_test.go、testdata/github/。
+**Files:** Create internal/prwatch/github.go、changes.go；internal/prwatch/github_test.go、testdata/github/。
 
 **Interfaces:**
 - Consumes: PR、Snapshot、Changes，源 collect_snapshot/changes_between 的读取与排序规则。
@@ -542,7 +542,7 @@ func TestTerminalMetadataSkipsAllFeedbackRequests(t *testing.T) {
 - [ ] **Step 2: 确认缺少实现时失败。**
 
 ```sh
-rtk proxy go test ./__tests__/pr-watch -run 'TestTerminalMetadata' -v
+rtk proxy go test ./internal/prwatch -run 'TestTerminalMetadata' -v
 ```
 
 - [ ] **Step 3: 实现 bounded gh 读取。** 每次实际请求独立 45 秒。使用 exec.CommandContext 的参数数组，不拼 shell。stdout 经 UseNumber 解码；失败只保留最多 1200 个 rune 的诊断，原评论正文不截断。
@@ -625,15 +625,15 @@ func TestInitialBaselineAndEditedCommentDelta(t *testing.T) {
 - [ ] **Step 6: 通过回归并提交。**
 
 ```sh
-rtk proxy gofmt -w internal/prwatch __tests__/pr-watch
-rtk proxy go test ./... ./__tests__/pr-watch
-rtk git add internal/prwatch __tests__/pr-watch
+rtk proxy gofmt -w internal/prwatch
+rtk proxy go test ./...
+rtk git add internal/prwatch
 rtk git commit -m "feat(pr-watch): port GitHub collection and deltas to Go" -m "Co-authored-by: Codex <noreply@openai.com>"
 ```
 
 ## Task 6: Go collecting 与可重置静默窗口
 
-**Files:** Create internal/prwatch/watch.go；__tests__/pr-watch/watch_test.go。
+**Files:** Create internal/prwatch/watch.go；internal/prwatch/watch_test.go。
 
 **Interfaces:**
 - Consumes: Store、Collect、ChangesBetween、ReadError、ErrStopped。
@@ -678,7 +678,7 @@ func TestQuietResetsAtZeroSixTwelve(t *testing.T) {
 - [ ] **Step 2: 运行失败测试。**
 
 ```sh
-rtk proxy go test ./__tests__/pr-watch -run TestQuiet -v
+rtk proxy go test ./internal/prwatch -run TestQuiet -v
 ```
 
 - [ ] **Step 3: 实现采集、冻结与独立错误事件。** Observe 先检查 frozen pending/finished；previous 取 collecting.snapshot，否则取已 ack snapshot。terminal 仅更新 metadata，并复制 previous 的集合，不能从终态空集合生成删除。ChangesBetween 无变化时不 Save、不追加、不重置 quiet；首次成功为 initial，已报告错误恢复为 recovered。每条 Observation 记录 UTC 时间/head/delta，批次保存最近 snapshot 和 recovered_error，按错误字符串内容比较，不能比较指针地址；重复成功不重复累计 recovered。batch.kind 保留 initial/recovered，后续普通 update 不覆盖它；MERGED/CLOSED 必须覆盖成对应终态。
@@ -762,15 +762,15 @@ func TestQuietCadence(t *testing.T) {
 - [ ] **Step 6: 通过全部 Go 回归并提交。**
 
 ```sh
-rtk proxy gofmt -w internal/prwatch __tests__/pr-watch
-rtk proxy go test ./... ./__tests__/pr-watch
-rtk git add internal/prwatch __tests__/pr-watch
+rtk proxy gofmt -w internal/prwatch
+rtk proxy go test ./...
+rtk git add internal/prwatch
 rtk git commit -m "feat(pr-watch): batch observations with a resettable quiet window" -m "Co-authored-by: Codex <noreply@openai.com>"
 ```
 
 ## Task 7: Markdown、稳定分段与六个 PR 命令
 
-**Files:** Create internal/prwatch/message.go、cli.go；__tests__/pr-watch/message_test.go、cli_test.go；Modify cmd/goldilocks/main.go。
+**Files:** Create internal/prwatch/message.go、cli.go；internal/prwatch/message_test.go、cli_test.go；Modify cmd/goldilocks/main.go。
 
 **Interfaces:**
 - Consumes: Store、Event、Changes、Options、Dependencies。
@@ -806,7 +806,7 @@ func TestMessagePartsPreserveUnicodeAndRestart(t *testing.T) {
 - [ ] **Step 2: 运行失败测试。**
 
 ```sh
-rtk proxy go test ./__tests__/pr-watch -run TestMessage -v
+rtk proxy go test ./internal/prwatch -run TestMessage -v
 ```
 
 - [ ] **Step 3: 移植 formatter，按 rune 分段。** ObservationBody 逐项保持 source notification_body 的 CI 差异、原文引用、作者、URL、line/originalLine、outdated、reviewed commit 和状态文案；不包含未变化 CI。新 NotificationBody 顺序渲染每条 observation 的 time/head/正文；终态摘要在前，但不提前 return 丢掉此前正文。removed_evidence 用“上次观察到的正文”和旧 head；threads_removed 仍仅“不再未解决”。旧事件无 observations 时使用原单事件格式。
@@ -876,9 +876,9 @@ func TestOfflineCLIDoesNotNeedRuntimeTools(t *testing.T){
 - [ ] **Step 6: 通过全部回归并提交统一 PR 命令。**
 
 ```sh
-rtk proxy gofmt -w cmd/goldilocks internal/prwatch __tests__/pr-watch
-rtk proxy go test ./... ./__tests__/pr-watch
-rtk git add cmd/goldilocks internal/prwatch __tests__/pr-watch
+rtk proxy gofmt -w cmd/goldilocks internal/prwatch
+rtk proxy go test ./...
+rtk git add cmd/goldilocks internal/prwatch
 rtk git commit -m "feat(cli): expose PR watching and durable messages in Go" -m "Co-authored-by: Codex <noreply@openai.com>"
 ```
 
@@ -1267,7 +1267,7 @@ func TestRegistrationConcurrencyIsIsolated(t *testing.T) {
 ```sh
 rtk proxy gofmt -w cmd/goldilocks
 rtk proxy go test -race ./cmd/goldilocks
-rtk proxy go test ./... ./__tests__/pr-watch
+rtk proxy go test ./...
 rtk git add cmd/goldilocks
 rtk git commit -m "feat(hooks): guard registered PR watcher exits" -m "Co-authored-by: Codex <noreply@openai.com>"
 ```
@@ -1392,9 +1392,9 @@ jobs:
         with:
           go-version: '1.25.6'
           cache: false
-      - run: go test ./... ./__tests__/pr-watch
+      - run: go test ./...
       - if: runner.os == 'Linux'
-        run: go test -race ./... ./__tests__/pr-watch
+        run: go test -race ./...
       - run: go run ./scripts/build.go --check
   binaries:
     runs-on: ubuntu-latest
@@ -1411,7 +1411,7 @@ jobs:
 - [ ] **Step 6: 完整校验并提交。**
 
 ```sh
-rtk proxy go test ./... ./__tests__/pr-watch
+rtk proxy go test ./...
 rtk proxy go run ./scripts/build.go --check
 rtk git diff --check
 rtk git add scripts/build.go bin hooks .github/workflows/ci.yml .codex-plugin/plugin.json
@@ -1522,7 +1522,7 @@ rtk git commit -m "docs(cli): document unified PR monitoring and watcher ownersh
 
 ```sh
 rtk proxy go test -race ./cmd/goldilocks
-rtk proxy go test ./... ./__tests__/pr-watch
+rtk proxy go test ./...
 rtk proxy go run ./scripts/build.go
 rtk git diff --exit-code -- bin
 rtk git diff --check
@@ -1662,7 +1662,7 @@ rtk git -C .superpowers/pr-watch-source commit -m "docs(pr-watch): move maintena
 | App idle 唤醒、multipart ack、25 分钟真实事件 | 11 |
 | 新来源可用后旧仓库切换、symlink 与回滚约束 | 12 |
 
-完整回归命令必须显式包含 __tests__/pr-watch。测试通过不代表 App/平台/长时间运行通过，未运行的验收标 not_verified。执行时遇到当前运行时与文档差异，应记录证据并修订对应契约，不增加 daemon、独立任务或无限重启。
+完整回归命令使用 `go test ./...`，自动包含就近放置的包测试。测试通过不代表 App/平台/长时间运行通过，未运行的验收标 not_verified。执行时遇到当前运行时与文档差异，应记录证据并修订对应契约，不增加 daemon、独立任务或无限重启。
 
 ## 执行方式
 

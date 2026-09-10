@@ -73,7 +73,8 @@ covered candidate version 0.2.0 with Go 1.25.6 on macOS arm64 and Codex CLI
 not treated as the candidate and its install, cache, hooks, and trust settings
 were not changed.
 
-The following commands passed against the staged candidate source:
+The following commands passed against the staged candidate source before the
+test layout migration (the explicit `__tests__` path below is historical):
 
 ```text
 go test -race ./cmd/goldilocks
@@ -157,11 +158,35 @@ those checks run, they stay `not_verified`; local fixtures, synthetic hook
 payloads, successful cross-builds, and metadata parsing cannot promote them to
 `passed`.
 
+## Go test layout verification
+
+On 2026-09-10, the six PR watch test files and nine fixtures moved from the
+repository-level test directory to `internal/prwatch`, beside the production
+package. All 15 files remain byte-identical to the previous PR head. The tests
+retain `package prwatch_test`, and fixtures remain in package-local `testdata`.
+The PR watch CLI tests stay with this suite because they share its state and
+snapshot helpers; their repository-root build path is unchanged.
+
+With Go 1.25.6 on macOS arm64, the following checks passed after the move:
+
+```text
+go test ./...
+go test -race ./...
+go run ./scripts/build.go --check
+```
+
+`go test ./... -list '^Test'` discovers all 56 original top-level tests,
+including the PR watch suite, without an explicit test-directory argument.
+CI now uses the same standard package pattern. The bundled binary check
+verified all six executable formats and checksums plus native macOS arm64
+smoke tests. This layout change does not complete the pending live App or
+cross-platform installation acceptance work above.
+
 ## Go migration coverage map
 
 The 20 Python cases below define the pinned behavioral assertions now covered
-by Go `*_test.go` files under `__tests__/pr-watch`. Hook registration and
-lifecycle continuation coverage lives with the CLI in
+by Go `*_test.go` files alongside the package under `internal/prwatch`. Hook
+registration and lifecycle continuation coverage lives with the CLI in
 `cmd/goldilocks/watcher_test.go`. Neither the test runner nor an installed user
 needs Python.
 
