@@ -1,0 +1,27 @@
+name: CI
+on: [push, pull_request, workflow_call]
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.6'
+          cache: false
+      - run: go test ./...
+      - if: runner.os == 'Linux'
+        run: go test -race ./...
+      - name: Read plugin version
+        shell: bash
+        run: echo "GOLDILOCKS_VERSION=$(jq -r .version .codex-plugin/plugin.json)" >> "$GITHUB_ENV"
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: v2.18.1
+          args: release --snapshot --clean
+      - run: go run ./scripts/verify.go

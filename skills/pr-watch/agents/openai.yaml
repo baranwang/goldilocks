@@ -1,0 +1,4 @@
+interface:
+  display_name: "PR Watch"
+  short_description: "Watch PR CI, comments, and reviews until merge or closure"
+  default_prompt: "Use $pr-watch to monitor this PR and send CI and review updates to this task until it is merged or closed."

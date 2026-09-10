@@ -1,0 +1,34 @@
+version: 2
+project_name: goldilocks
+
+builds:
+  - main: ./cmd/goldilocks
+    # Keep the launchers' existing asset names, including Windows casing.
+    binary: >-
+      goldilocks-{{ title .Os }}-
+      {{- if eq .Os "windows" }}{{ if eq .Arch "amd64" }}AMD64{{ else }}ARM64{{ end }}
+      {{- else if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Os "linux" }}aarch64
+      {{- else }}arm64{{ end }}
+    no_unique_dist_dir: true
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    env:
+      - CGO_ENABLED=0
+      - GOTOOLCHAIN=go1.25.6
+    flags: [-trimpath, -buildvcs=false]
+    ldflags: ['-s -w -X main.version={{ .Version }}']
+    hooks:
+      # Snapshots let maintainers regenerate the pinned manifest. Real releases
+      # must match it before GoReleaser can publish any executable.
+      post: '{{ if not .IsSnapshot }}go run ./scripts/verify.go --binary "{{ .Path }}"{{ end }}'
+
+archives:
+  - formats: [binary]
+    name_template: '{{ .Binary }}'
+checksum:
+  name_template: SHA256SUMS
+snapshot:
+  version_template: '{{ .Env.GOLDILOCKS_VERSION }}'
+changelog:
+  use: github-native

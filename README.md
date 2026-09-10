@@ -10,12 +10,14 @@
 
 **No workflow changes. Just the right model.**
 
-Goldilocks is a lightweight Codex plugin. It steps in only after the existing
-workflow has decided to create a subagent, helping select a suitable model and
-reasoning effort.
+Goldilocks is a lightweight Codex plugin for model routing and PR monitoring.
+Its model-routing skill steps in only after the existing workflow has decided
+to create a subagent, helping select a suitable model and reasoning effort.
 
-It does not decide whether to create subagents or change tasks and workflows.
-Its only responsibility is choosing the model and reasoning effort.
+The `model-routing` skill does not decide whether to create subagents or change
+tasks and workflows. Its only responsibility is choosing model and reasoning
+effort. The `pr-watch` skill delegates continuous PR monitoring and evidence
+delivery to a child.
 
 ## Why Goldilocks
 
@@ -42,19 +44,32 @@ codex plugin marketplace add baranwang/goldilocks
 codex plugin add goldilocks@goldilocks
 ```
 
-Use `/hooks` to review and trust the Goldilocks hook scripts, then start a new
-Codex task for the plugin to take effect.
+Review and trust the installed hooks, then use a task that loaded that version.
+Use `/hooks` to inspect the hook definitions.
 
 ## How it works
 
 `SessionStart` and `SubagentStart` hooks inject a compact policy from
-`skills/goldilocks/SKILL.md`. Before an already-planned `spawn_agent` call, the
+`skills/model-routing/SKILL.md`. Before an already-planned `spawn_agent` call, the
 current agent preserves explicit user choices, checks the tool schema,
 classifies the child task, and changes only supported `model` and
 `reasoning_effort` fields.
 
-The runtime stays minimal: it uses native POSIX `sh`/`awk` on macOS and Linux,
-and PowerShell on Windows. It requires neither Node.js nor Python.
+One Go CLI provides hooks, PR monitoring, and watcher registration. A thin
+shell/PowerShell launcher downloads the matching `v<plugin-version>` GitHub
+Release binary on first use, checks its SHA-256 against `scripts/SHA256SUMS`,
+and caches it under `PLUGIN_DATA`. Subsequent calls reuse the verified cache.
+Outside plugin hooks, the fallback is `${XDG_CACHE_HOME:-$HOME/.cache}/goldilocks`
+on macOS/Linux and `%LOCALAPPDATA%/goldilocks` on Windows.
+
+No Node, Python, or Go installation is required. First use needs HTTPS access
+to GitHub Releases and curl (curl.exe on modern Windows); macOS/Linux also use
+sha256sum or shasum. Online PR reads use authenticated gh. Failed downloads or
+checksum mismatches produce an error; retry once the release/network is available.
+Hook timeout is 150 seconds to allow a cold download; cache hits execute directly.
+Review and trust changed hooks before using them.
+Changes are delivered after 30 seconds of observed quiet by default.
+PR monitoring supports macOS/Linux in this release; Windows covers hooks.
 
 | Route | Intended work | Default behavior |
 |---|---|---|
@@ -71,6 +86,51 @@ workflow settings always take precedence. If `fork_turns` is omitted or set to
 does not allow compute overrides, Goldilocks keeps `fork_turns` unchanged and
 inherits the existing configuration. It never changes context forking to force
 model routing.
+
+## PR monitoring
+
+Ask to monitor a PR, or use `$pr-watch`. The main task receives CI, comments,
+and review evidence; its child owns polling, delivery, acknowledgements, and
+cleanup until merge, closure, or an explicit stop. The default poll interval is
+60 seconds. Monitoring does not authorize posting, pushing, or merging.
+
+Standalone skills contain instructions only and require a compatible CLI.
+Without loaded, trusted hooks, the child skips watcher registration and reports
+missing lifecycle protection. No compatible CLI means monitoring cannot start.
+Local monitoring cannot guarantee continuation during machine sleep, app exit,
+hard interruption, or quota exhaustion. Tool waits can consume tokens; this is
+not a zero-cost daemon.
+
+## Binary releases
+
+[GoReleaser](https://goreleaser.com/) v2.18.1 builds and publishes the six
+executables using `.goreleaser.yaml` and Go 1.25.6. Build outputs live in ignored
+`dist/`; executables are not tracked in Git. To build locally and refresh the
+pinned checksums after a Go source or plugin-version change:
+
+```bash
+GOLDILOCKS_VERSION=$(jq -r .version .codex-plugin/plugin.json) goreleaser release --snapshot --clean
+cp dist/SHA256SUMS scripts/SHA256SUMS
+GOTOOLCHAIN=go1.25.6 go run ./scripts/verify.go
+```
+
+Commit the checksum update with the source/version change. CI builds snapshots
+on Linux, macOS, and Windows, verifies all six assets against the committed
+checksums, and exercises the native launcher and all three hook commands.
+
+After validation, push a tag matching the plugin version (for example,
+`v0.2.0`). The Release workflow waits for all three systems, then GoReleaser
+builds and publishes the executables and `SHA256SUMS`. A post-build hook checks
+each executable against the pinned manifest before publication; a mismatch
+aborts the release. Snapshots never publish and allow checksum regeneration.
+Publish the assets before distributing the matching plugin version. Releases
+must remain available and immutable for that version; there is no `latest`
+fallback.
+
+POSIX downloads use a directory lock and clean it up on normal failure or
+interruption. A hard-killed downloader can leave `download.lock`; after checking
+that no downloader is active, remove that specific lock directory and retry.
+Windows uses an OS-managed file lock, released when the process exits.
 
 ## License
 

@@ -1,7 +1,7 @@
 {
   "name": "goldilocks",
-  "version": "0.1.0",
-  "description": "Same workflow. Right-sized subagents.",
+  "version": "0.2.0",
+  "description": "Right-sized subagents and continuous PR monitoring in one Codex plugin.",
   "author": {
     "name": "Baran Wang",
     "url": "https://github.com/baranwang"
@@ -13,13 +13,14 @@
     "codex",
     "subagents",
     "model-routing",
-    "reasoning-effort"
+    "reasoning-effort",
+    "pr-watch"
   ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Goldilocks",
-    "shortDescription": "Right-size Codex subagents without changing workflow",
-    "longDescription": "Keeps the active workflow intact and guides agents to choose supported model and reasoning settings only when a subagent is already being spawned.",
+    "shortDescription": "Right-size subagents and monitor PR CI, comments, and reviews",
+    "longDescription": "Preserves existing workflows while routing already-planned subagents, and delegates PR monitoring, evidence delivery, and watcher lifecycle registration through one Go CLI downloaded on first use.",
     "developerName": "Baran Wang",
     "category": "Developer Tools",
     "capabilities": [
@@ -28,7 +29,7 @@
     ],
     "websiteURL": "https://github.com/baranwang/goldilocks",
     "defaultPrompt": [
-      "Explain how Goldilocks routes an already-planned subagent."
+      "Explain how Goldilocks routes an already-planned subagent, or use $pr-watch to monitor this PR."
     ],
     "brandColor": "#D4A72C",
     "logo": "./assets/logo.webp"
