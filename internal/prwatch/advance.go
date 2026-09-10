@@ -21,6 +21,132 @@ type WorkerStatus struct {
 	ExecutionID string
 }
 
+func (c *Controller) Advance(ctx context.Context, ticketFile, agentID string, deps Dependencies) (Action, error) {
+	s, err := c.Bind(ticketFile, agentID)
+	if err != nil {
+		return Action{}, err
+	}
+	var action Action
+	terminal := false
+	err = managedUpdate(s, func(tx *Store) error {
+		if err := tx.CommitAccepted(); err != nil {
+			return err
+		}
+		control := tx.Data.Control
+		if control.Stage == NeedsAttention {
+			action = advanceAction(control, "attention", control.FailureCode, 0)
+			return nil
+		}
+		if hasPending(tx) {
+			action, err = tx.Offer(c.Now())
+			return err
+		}
+		terminal = tx.Data.Finished
+		return nil
+	})
+	if err != nil || action.Action != "" {
+		return action, err
+	}
+	if terminal {
+		return c.finishAdvance(s)
+	}
+
+	event, err := c.PollManaged(ctx, s, deps)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrBusy):
+			return c.busyAdvance(s)
+		case errors.Is(err, ErrYielded):
+			return c.yieldedAdvance(s)
+		default:
+			return c.faultAdvance(s, "poll_failed", err)
+		}
+	}
+	if len(event) == 0 {
+		return c.faultAdvance(s, "poll_failed", errors.New("managed poll returned no event"))
+	}
+	err = managedUpdate(s, func(tx *Store) error {
+		action, err = tx.Offer(c.Now())
+		return err
+	})
+	return action, err
+}
+
+func advanceAction(control *Control, action, reason string, retry int) Action {
+	return Action{
+		SchemaVersion: 1, Action: action, WatchID: control.WatchID,
+		RetryAfterSeconds: retry, Reason: reason,
+	}
+}
+
+func (c *Controller) finishAdvance(s *Store) (Action, error) {
+	release, err := s.Lock(false)
+	if errors.Is(err, ErrLocked) {
+		state, readErr := ReadState(s.Path)
+		if readErr != nil {
+			return Action{}, readErr
+		}
+		return advanceAction(state.Control, "wait", "worker_active", 1), nil
+	}
+	if err != nil {
+		return Action{}, err
+	}
+	err = managedUpdate(s, func(tx *Store) error {
+		if !tx.Data.Finished || hasPending(tx) || tx.Data.Collecting != nil || tx.Data.Control.Outbox != nil {
+			return errors.New("terminal cleanup requires settled business state")
+		}
+		tx.Data.Control.Stage = Finished
+		return nil
+	})
+	releaseErr := release()
+	if err != nil {
+		return Action{}, err
+	}
+	if releaseErr != nil {
+		return Action{}, releaseErr
+	}
+	return advanceAction(s.Data.Control, "finished", "", 0), nil
+}
+
+func (c *Controller) busyAdvance(s *Store) (Action, error) {
+	state, err := ReadState(s.Path)
+	if err != nil {
+		return Action{}, err
+	}
+	control := state.Control
+	if control.Worker.HostHandle == "" {
+		return Action{}, errors.New("active worker has no host handle")
+	}
+	action := advanceAction(control, "wait", "worker_active", 1)
+	action.ThreadID = control.Worker.HostHandle
+	return action, nil
+}
+
+func (c *Controller) yieldedAdvance(s *Store) (Action, error) {
+	state, err := ReadState(s.Path)
+	if err != nil {
+		return Action{}, err
+	}
+	if state.Control.Stage == NeedsAttention {
+		return advanceAction(state.Control, "attention", state.Control.FailureCode, 0), nil
+	}
+	return advanceAction(state.Control, "wait", "worker_yielded", 1), nil
+}
+
+func (c *Controller) faultAdvance(s *Store, code string, cause error) (Action, error) {
+	var action Action
+	err := managedUpdate(s, func(tx *Store) error {
+		control := tx.Data.Control
+		control.Stage = NeedsAttention
+		control.FailureCode = code
+		control.FailureDetail = cause.Error()
+		control.FaultSeen = true
+		action = advanceAction(control, "attention", code, 0)
+		return nil
+	})
+	return action, err
+}
+
 var ErrYielded = errors.New("current execution yielded; state preserved")
 var ErrBusy = errors.New("watch execution already running")
 
