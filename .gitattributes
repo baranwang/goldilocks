@@ -1,2 +1,3 @@
 scripts/SHA256SUMS text eol=lf
 *.sh text eol=lf
+*.go text eol=lf
