@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"runtime"
 	"time"
 )
 
@@ -51,6 +52,13 @@ func (c *Controller) RunCLI(ctx context.Context, args []string, runtimeID, cwd s
 	}
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	// Managed polling and its durable state protocol depend on POSIX locking.
+	// Keep construction and argument validation available on Windows so routing
+	// hooks and protocol tests remain usable, but reject execution here before
+	// any managed action can reach a poll loop.
+	if runtime.GOOS == "windows" {
+		return ErrUnsupportedPlatform
 	}
 	encode := func(value any) error {
 		encoder := json.NewEncoder(output)

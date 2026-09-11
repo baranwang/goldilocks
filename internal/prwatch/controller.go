@@ -11,7 +11,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 )
@@ -58,9 +57,6 @@ type Membership struct {
 }
 
 func NewController(root string, now func() time.Time) (*Controller, error) {
-	if runtime.GOOS == "windows" {
-		return nil, ErrUnsupportedPlatform
-	}
 	if root == "" {
 		return nil, errors.New("controller root is required")
 	}

@@ -507,6 +507,9 @@ func TestStartDefaultsRejectsNegativeAndConflictingOptions(t *testing.T) {
 }
 
 func TestStartResumesMissingTicketOnlyWhenExplicit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("managed POSIX state")
+	}
 	now := specTime
 	c, err := NewController(t.TempDir(), func() time.Time { return now })
 	if err != nil {

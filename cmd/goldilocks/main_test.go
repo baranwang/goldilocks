@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -95,6 +96,9 @@ func TestSubagentStartRecordsMembershipAndKeepsRouting(t *testing.T) {
 	if testing.Short() {
 		t.Skip("disk-backed controller")
 	}
+	if runtime.GOOS == "windows" {
+		t.Skip("managed POSIX controller")
+	}
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)
 	controllerRoot := filepath.Join(home, "goldilocks", "pr-watch")
@@ -131,6 +135,9 @@ func TestSubagentStartRecordsMembershipAndKeepsRouting(t *testing.T) {
 }
 
 func TestManagedObservationFailureIsFailOpen(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("managed POSIX controller")
+	}
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)
 	controllerRoot := filepath.Join(home, "goldilocks", "pr-watch")
@@ -163,6 +170,9 @@ func TestManagedObservationFailureIsFailOpen(t *testing.T) {
 }
 
 func TestWindowsManagedDiagnosticRequiresMatchingIntent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture requires managed POSIX state")
+	}
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)
 	c, err := prwatch.NewController(filepath.Join(home, "goldilocks", "pr-watch"), time.Now)

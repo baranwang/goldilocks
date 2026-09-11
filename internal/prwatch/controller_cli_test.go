@@ -76,6 +76,9 @@ func TestControllerCLIRetiresLegacyActions(t *testing.T) {
 }
 
 func TestControllerCLIImportsLegacyState(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("managed POSIX CLI")
+	}
 	source := filepath.Join(t.TempDir(), "legacy.json")
 	raw, err := os.ReadFile(filepath.Join("testdata", "v2-pending.json"))
 	if err != nil {
