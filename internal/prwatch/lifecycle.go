@@ -133,6 +133,9 @@ func (c *Controller) childStopDecision(parentID, agentID string) (*HookDecision,
 		if control == nil || control.ParentID != parentID || control.AgentID != agentID {
 			continue
 		}
+		if finishedGeneration(state) {
+			return nil, nil
+		}
 		store, err := c.Open(parentID, state.PRURL)
 		if err != nil {
 			return nil, err
@@ -155,9 +158,6 @@ func (c *Controller) childStopDecision(parentID, agentID string) (*HookDecision,
 				control.FailureCode = "no_progress"
 				control.FailureDetail = "No measurable progress after two continuations"
 				control.FaultSeen = false
-				if control.Worker.ID != "" {
-					control.Worker.Ended = true
-				}
 				exhausted = true
 			} else {
 				control.NoProgressStops++
@@ -211,6 +211,7 @@ func (c *Controller) parentStopDecision(parentID string) (*HookDecision, error) 
 				}
 			}
 			block = (control.Stage == Starting || control.Stage == Initializing) && !control.Ready ||
+				control.Stage == Stopping && control.AgentID == "" ||
 				control.Stage == NeedsAttention && !control.FaultSeen
 			if !block {
 				return nil
@@ -224,9 +225,6 @@ func (c *Controller) parentStopDecision(parentID string) (*HookDecision, error) 
 				control.FailureCode = "no_progress"
 				control.FailureDetail = "No measurable progress after two continuations"
 				control.FaultSeen = false
-				if control.Worker.ID != "" {
-					control.Worker.Ended = true
-				}
 				exhausted = true
 				block = false
 				return nil

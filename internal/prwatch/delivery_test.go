@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -260,6 +262,44 @@ func TestCommitAcceptedRollsBackWithOuterTransaction(t *testing.T) {
 	}
 	if !bytes.Equal(after.Pending, beforePending) || after.LastAck != nil || after.Control.Outbox == nil || len(after.Control.History) != 0 {
 		t.Fatal("failed outer transaction partially committed acceptance")
+	}
+}
+
+func TestTerminalCommitAcceptedKeepsStopMarkerOnSaveFailure(t *testing.T) {
+	c, r, s := boundFixture(t)
+	terminal := managedSnapshot()
+	terminal["state"] = "MERGED"
+	if err := s.Update(func(tx *Store) error {
+		_, err := tx.Stage("merged", terminal, Changes{}, nil, nil, specTime)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	offer, err := c.Advance(context.Background(), r.TicketFile, specChild, Dependencies{})
+	if err != nil || offer.Action != "send" {
+		t.Fatal(offer, err)
+	}
+	if err := c.AcceptSend(ObservedSend{specChild, specParent, "terminal-save-failure", offer.Prompt, true, specTime}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.StopPath, []byte("stop\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Update(func(tx *Store) error {
+		if err := tx.CommitAccepted(); err != nil {
+			return err
+		}
+		tx.Path = filepath.Join(t.TempDir(), "missing", "state.json")
+		return nil
+	}); err == nil {
+		t.Fatal("outer save failure was not reported")
+	}
+	if _, err := os.Stat(s.StopPath); err != nil {
+		t.Fatalf("stop marker was removed before outer save committed: %v", err)
+	}
+	state, err := ReadState(s.Path)
+	if err != nil || state.Pending == nil || state.Control.Outbox == nil || state.Finished {
+		t.Fatalf("failed commit changed durable state: %#v", state)
 	}
 }
 

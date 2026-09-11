@@ -48,11 +48,12 @@ type State struct {
 }
 
 type Store struct {
-	PR        PR
-	Path      string
-	StopPath  string
-	Data      State
-	deferSave bool
+	PR               PR
+	Path             string
+	StopPath         string
+	Data             State
+	deferSave        bool
+	removeStopMarker bool
 }
 
 type Event struct {

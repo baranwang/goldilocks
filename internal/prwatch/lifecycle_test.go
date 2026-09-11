@@ -29,6 +29,26 @@ func TestParentSeesChildThatNeverRegistered(t *testing.T) {
 	}
 }
 
+func TestParentStopBlocksUnboundStoppingIntent(t *testing.T) {
+	c, _ := startedFixture(t)
+	if err := c.Stop(specParent, specPR); err != nil {
+		t.Fatal(err)
+	}
+	decision, err := c.StopDecision(RuntimeEvent{Name: "Stop", SessionID: specParent})
+	if err != nil || decision == nil || decision.Decision != "block" ||
+		!strings.Contains(decision.Reason, "resume") {
+		t.Fatal(decision, err)
+	}
+	store, err := c.Open(specParent, specPR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := ReadState(store.Path)
+	if err != nil || state.Control.Stage != Stopping || state.Control.AgentID != "" {
+		t.Fatalf("unbound stopping intent was not exposed for cleanup: %#v", state.Control)
+	}
+}
+
 func TestRepeatedChildStopsUseEvidenceBudget(t *testing.T) {
 	c, _, _ := boundFixture(t)
 	event := RuntimeEvent{Name: "SubagentStop", SessionID: specParent, AgentID: specChild}
@@ -58,6 +78,57 @@ func TestRepeatedChildStopsUseEvidenceBudget(t *testing.T) {
 	}
 	if status.Stage != NeedsAttention {
 		t.Fatal(status)
+	}
+}
+
+func TestFinishedChildStopDoesNotRequestRecovery(t *testing.T) {
+	c, _, store := boundFixture(t)
+	if err := store.Update(func(tx *Store) error {
+		tx.Data.Finished = true
+		tx.Data.Control.Stage = Finished
+		tx.Data.Control.InitialAccepted = true
+		tx.Data.Control.InitialEventID = "terminal-event"
+		tx.Data.Control.History["terminal-event"] = Delivery{
+			EventID: "terminal-event", Kind: "merged",
+			Parts: []DeliveryPart{{SHA256: strings.Repeat("a", 64)}},
+		}
+		tx.Data.Control.Worker = Execution{ID: specWatch, Ended: true}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	decision, err := c.StopDecision(RuntimeEvent{Name: "SubagentStop", SessionID: specParent, AgentID: specChild})
+	if err != nil || decision != nil {
+		t.Fatal("finished child requested recovery", decision, err)
+	}
+	state, err := ReadState(store.Path)
+	if err != nil || state.Control.NoProgressStops != 0 || state.Control.Stage != Finished {
+		t.Fatalf("finished child stop changed terminal state: %#v", state.Control)
+	}
+}
+
+func TestChildNoProgressDoesNotFabricateWorkerEnded(t *testing.T) {
+	c, _, store := boundFixture(t)
+	if err := store.Update(func(tx *Store) error {
+		tx.Data.Control.Worker = Execution{ID: specWatch, HeartbeatAt: specTime}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	release, err := store.Lock(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	event := RuntimeEvent{Name: "SubagentStop", SessionID: specParent, AgentID: specChild}
+	for i := 0; i < 3; i++ {
+		if _, err := c.StopDecision(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state, err := ReadState(store.Path)
+	if err != nil || state.Control.Stage != NeedsAttention || state.Control.Worker.Ended {
+		t.Fatalf("no-progress stop fabricated worker completion: %#v", state.Control)
 	}
 }
 
@@ -228,6 +299,7 @@ func TestParentGuardIsBoundedAndHealthyReadyWatchDoesNotBlock(t *testing.T) {
 		if err := store.Update(func(tx *Store) error {
 			tx.Data.Control.InitialAccepted = true
 			tx.Data.Control.InitialEventID = "initial-event"
+			tx.Data.Control.History["initial-event"] = Delivery{EventID: "initial-event", Kind: "initial", Parts: []DeliveryPart{{SHA256: strings.Repeat("a", 64)}}}
 			tx.Data.Control.Ready = true
 			tx.Data.Control.Stage = Running
 			return nil
@@ -426,7 +498,7 @@ func TestResumeRetainsVerifiedChildAndHistoricalEvidence(t *testing.T) {
 		tx.Data.Control.Stage = NeedsAttention
 		tx.Data.Control.Ready = true
 		tx.Data.Control.InitialAccepted = true
-		tx.Data.Control.InitialEventID = "initial-event"
+		tx.Data.Control.InitialEventID = "history-event"
 		tx.Data.Control.FailureCode = "poll_failed"
 		tx.Data.Control.FailureDetail = "saved failure"
 		tx.Data.Control.FaultSeen = true
@@ -698,6 +770,7 @@ func TestTerminalAcceptedWithHeldLockRequiresCleanupAdvance(t *testing.T) {
 		tx.Data.Finished = true
 		tx.Data.Control.InitialAccepted = true
 		tx.Data.Control.InitialEventID = "terminal-event"
+		tx.Data.Control.History["terminal-event"] = Delivery{EventID: "terminal-event", Kind: "merged", Parts: []DeliveryPart{{SHA256: strings.Repeat("a", 64)}}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -722,6 +795,7 @@ func TestCorruptManagedStateWarnsParentButDoesNotBlockExactChild(t *testing.T) {
 	if err := store.Update(func(tx *Store) error {
 		tx.Data.Control.InitialAccepted = true
 		tx.Data.Control.InitialEventID = "initial-event"
+		tx.Data.Control.History["initial-event"] = Delivery{EventID: "initial-event", Kind: "initial", Parts: []DeliveryPart{{SHA256: strings.Repeat("a", 64)}}}
 		tx.Data.Control.Ready = true
 		tx.Data.Control.Stage = Running
 		return nil
@@ -849,6 +923,7 @@ func TestResumeDoesNotReopenFinishedBusinessState(t *testing.T) {
 		tx.Data.Finished = true
 		tx.Data.Control.InitialAccepted = true
 		tx.Data.Control.InitialEventID = "terminal-event"
+		tx.Data.Control.History["terminal-event"] = Delivery{EventID: "terminal-event", Kind: "merged", Parts: []DeliveryPart{{SHA256: strings.Repeat("a", 64)}}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)

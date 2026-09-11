@@ -171,6 +171,18 @@ func validateControl(state State) error {
 	if c.InitialAccepted && c.InitialEventID == "" {
 		return errors.New("initial acceptance requires an event")
 	}
+	if c.InitialAccepted || c.Ready {
+		retained := false
+		if delivery, ok := c.History[c.InitialEventID]; ok && delivery.EventID == c.InitialEventID {
+			retained = true
+		}
+		if c.Outbox != nil && c.Outbox.EventID == c.InitialEventID {
+			retained = true
+		}
+		if !retained {
+			return errors.New("initial acceptance requires a retained event")
+		}
+	}
 	if (c.ImportPath == "") != (c.ImportSHA256 == "") || c.ImportSHA256 != "" && !validSHA256(c.ImportSHA256) {
 		return errors.New("control import path and digest are invalid")
 	}

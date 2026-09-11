@@ -134,10 +134,10 @@ GOTOOLCHAIN=go1.25.6 go run ./scripts/verify.go
 
 Commit the checksum update with the source/version change. CI builds snapshots
 on Linux, macOS, and Windows, verifies all six assets against the committed
-checksums, and exercises the native launcher and all three hook commands.
+checksums, and exercises the native launcher and all five hook commands.
 
 After validation, push a tag matching the plugin version (for example,
-`v0.2.0`). The Release workflow waits for all three systems, then GoReleaser
+`v0.3.0`). The Release workflow waits for all three systems, then GoReleaser
 builds and publishes the executables and `SHA256SUMS`. A post-build hook checks
 each executable against the pinned manifest before publication; a mismatch
 aborts the release. Snapshots never publish and allow checksum regeneration.

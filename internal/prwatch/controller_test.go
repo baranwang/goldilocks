@@ -143,6 +143,20 @@ func TestManagedStateRejectsInvalidControlWithoutWriting(t *testing.T) {
 	}
 }
 
+func TestManagedStateRequiresRetainedInitialEvent(t *testing.T) {
+	for _, name := range []string{"accepted", "ready"} {
+		t.Run(name, func(t *testing.T) {
+			s := managedFixture(t)
+			s.Data.Control.InitialEventID = "missing-initial"
+			s.Data.Control.InitialAccepted = true
+			s.Data.Control.Ready = name == "ready"
+			if err := s.Save(); err == nil {
+				t.Fatal("accepted initial state without retained event")
+			}
+		})
+	}
+}
+
 func TestManagedTransactionSaveFailureRollsBack(t *testing.T) {
 	s := managedFixture(t)
 	before, err := os.ReadFile(s.Path)

@@ -574,6 +574,11 @@ func (s *Store) Update(fn func(*Store) error) error {
 		return err
 	}
 	s.Data = tx.Data
+	if tx.removeStopMarker && tx.Data.Finished {
+		if err := os.Remove(tx.StopPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -688,6 +693,10 @@ func (s *Store) Ack(eventID string) error {
 	if len(s.Data.Pending) == 0 || isNull(s.Data.Pending) {
 		if s.Data.LastAck != nil && *s.Data.LastAck == eventID {
 			if s.Data.Finished {
+				if s.deferSave {
+					s.removeStopMarker = true
+					return nil
+				}
 				if err := os.Remove(s.StopPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 					return err
 				}
@@ -726,6 +735,10 @@ func (s *Store) Ack(eventID string) error {
 		return err
 	}
 	if s.Data.Finished {
+		if s.deferSave {
+			s.removeStopMarker = true
+			return nil
+		}
 		if err := os.Remove(s.StopPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
