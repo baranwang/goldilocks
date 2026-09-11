@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"time"
 )
 
@@ -494,8 +493,8 @@ func managedUpdate(s *Store, fn func(*Store) error) error {
 }
 
 func stopped(s *Store) bool {
-	_, err := os.Stat(s.StopPath)
-	return err == nil
+	pending, err := stopMarkerPending(s)
+	return err == nil && pending
 }
 
 func executionEnded(s *Store, executionID string) bool {

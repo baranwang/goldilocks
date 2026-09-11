@@ -370,6 +370,33 @@ func TestStopPreservesPendingAndPersistsMarker(t *testing.T) {
 	}
 }
 
+func TestStopMarkerScopesCurrentGenerationAndResumePreservesIt(t *testing.T) {
+	c, _, store := boundFixture(t)
+	state, err := ReadState(store.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	watchID := state.Control.WatchID
+	if err := c.Stop(specParent, specPR); err != nil {
+		t.Fatal(err)
+	}
+	markerWatchID, legacy, present, _, err := readStopMarker(store.StopPath)
+	if err != nil || !present || legacy || markerWatchID != watchID {
+		t.Fatalf("stop marker did not record its generation: watch_id=%q legacy=%v present=%v err=%v", markerWatchID, legacy, present, err)
+	}
+	if _, err := c.Resume(specParent, specPR, false); err != nil {
+		t.Fatal(err)
+	}
+	state, err = ReadState(store.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	markerWatchID, legacy, present, _, err = readStopMarker(store.StopPath)
+	if err != nil || !present || legacy || markerWatchID != watchID || state.Control.WatchID != watchID || state.Control.Stage != Stopping {
+		t.Fatalf("same-generation resume changed stop intent: state=%#v marker=%q legacy=%v present=%v err=%v", state.Control, markerWatchID, legacy, present, err)
+	}
+}
+
 func TestStopRejectsSymlinkedMarkerWithoutTouchingTarget(t *testing.T) {
 	c, _, store := boundFixture(t)
 	target := filepath.Join(t.TempDir(), "outside-stop")

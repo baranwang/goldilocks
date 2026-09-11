@@ -320,6 +320,90 @@ func TestControllerCLIReopenedFinishedGenerationStartsNewWatch(t *testing.T) {
 	}
 }
 
+func TestControllerStopRaceWithReopenedGenerationDoesNotStopNewWatch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("managed POSIX controller")
+	}
+	c, start, store := boundFixture(t)
+	if err := store.Update(func(tx *Store) error {
+		tx.Data.Finished = true
+		tx.Data.Control.Stage = Finished
+		tx.Data.Control.Worker = Execution{ID: specWatch, Ended: true}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reopenEntered := make(chan struct{})
+	releaseReopen := make(chan struct{})
+	c.beforeReopenCommit = func() {
+		close(reopenEntered)
+		<-releaseReopen
+	}
+	reopenedDone := make(chan struct {
+		result StartResult
+		err    error
+	}, 1)
+	go func() {
+		result, err := c.Start(specParent, t.TempDir(), specPR, StartOptions{Reopened: true})
+		reopenedDone <- struct {
+			result StartResult
+			err    error
+		}{result, err}
+	}()
+	select {
+	case <-reopenEntered:
+	case <-time.After(time.Second):
+		t.Fatal("reopened generation did not reach commit barrier")
+	}
+	stopDone := make(chan error, 1)
+	go func() { stopDone <- c.Stop(specParent, specPR) }()
+	markerSeen := false
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for !markerSeen {
+		watchID, legacy, present, _, err := readStopMarker(store.StopPath)
+		if err == nil && present && !legacy && watchID == start.WatchID {
+			markerSeen = true
+			break
+		}
+		select {
+		case <-deadline.C:
+			close(releaseReopen)
+			<-reopenedDone
+			<-stopDone
+			t.Fatal("concurrent stop did not recreate the old-generation marker")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	close(releaseReopen)
+	reopened := <-reopenedDone
+	if reopened.err != nil {
+		t.Fatal(reopened.err)
+	}
+	if err := <-stopDone; err != nil {
+		t.Fatal(err)
+	}
+	state, err := ReadState(store.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.result.WatchID == start.WatchID || state.Control.WatchID != reopened.result.WatchID || state.Control.Stage != Starting {
+		t.Fatalf("old stop changed reopened generation: old=%s reopened=%s state=%#v", start.WatchID, reopened.result.WatchID, state.Control)
+	}
+	current, err := c.Open(specParent, specPR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := stopMarkerPending(current)
+	if err != nil || pending {
+		t.Fatalf("stale stop marker was treated as current: pending=%v err=%v", pending, err)
+	}
+	if _, err := os.Stat(store.StopPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale stop marker survived reopened generation: %v", err)
+	}
+}
+
 func TestControllerCLIReopenedFailurePreservesStopMarker(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("managed POSIX CLI")

@@ -1,6 +1,7 @@
 package prwatch
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -27,6 +28,78 @@ type Status struct {
 	FailureCode      string       `json:"failure_code"`
 	FailureDetail    string       `json:"failure_detail"`
 	CleanupConfirmed bool         `json:"cleanup_confirmed"`
+}
+
+type stopMarker struct {
+	WatchID string `json:"watch_id"`
+}
+
+func writeStopMarker(path, watchID string) ([]byte, error) {
+	if watchID == "" {
+		raw := []byte("stop\n")
+		return raw, os.WriteFile(path, raw, 0600)
+	}
+	raw, err := encodeJSON(stopMarker{WatchID: watchID})
+	if err != nil {
+		return nil, err
+	}
+	if err := writeJSON0600(path, stopMarker{WatchID: watchID}); err != nil {
+		return nil, err
+	}
+	return append(raw, '\n'), nil
+}
+
+func readStopMarker(path string) (watchID string, legacy, present bool, raw []byte, err error) {
+	raw, err = os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, false, nil, nil
+	}
+	if err != nil {
+		return "", false, false, nil, err
+	}
+	var marker stopMarker
+	if decodeJSON(raw, &marker) == nil && validUUID(marker.WatchID) {
+		return marker.WatchID, false, true, raw, nil
+	}
+	return "", true, true, raw, nil
+}
+
+func removeStopMarkerIf(path string, expected []byte) error {
+	current, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil || !bytes.Equal(current, expected) {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("managed stop marker is a symlink")
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func stopMarkerPending(s *Store) (bool, error) {
+	watchID, legacy, present, raw, err := readStopMarker(s.StopPath)
+	if err != nil || !present {
+		return present, err
+	}
+	if s.Data.Control != nil && !legacy && watchID != s.Data.Control.WatchID {
+		return false, removeStopMarkerIf(s.StopPath, raw)
+	}
+	if s.Data.Control != nil && legacy && len(bytes.TrimSpace(raw)) == 0 {
+		return false, removeStopMarkerIf(s.StopPath, raw)
+	}
+	return true, nil
 }
 
 func (c *Controller) StopDecision(event RuntimeEvent) (*HookDecision, error) {
@@ -258,30 +331,27 @@ func (c *Controller) Stop(parentID, prURL string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := ReadState(store.Path); err != nil {
+	state, err := ReadState(store.Path)
+	if err != nil {
 		return err
+	}
+	if state.Control == nil || state.Control.ParentID != parentID {
+		return errors.New("managed state identity mismatch")
 	}
 	if err := c.rejectSymlinkedFile(store.StopPath); err != nil {
 		return err
 	}
-	marker, err := os.OpenFile(store.StopPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	watchID := state.Control.WatchID
+	markerRaw, err := writeStopMarker(store.StopPath, watchID)
 	if err != nil {
 		return err
 	}
-	if err := marker.Chmod(0600); err != nil {
-		marker.Close()
-		return err
-	}
-	if err := marker.Sync(); err != nil {
-		marker.Close()
-		return err
-	}
-	if err := marker.Close(); err != nil {
-		return err
-	}
-	return store.Update(func(tx *Store) error {
-		if tx.Data.Control.ParentID != parentID {
+	return managedUpdate(store, func(tx *Store) error {
+		if tx.Data.Control == nil || tx.Data.Control.ParentID != parentID {
 			return errors.New("managed state identity mismatch")
+		}
+		if tx.Data.Control.WatchID != watchID {
+			return removeStopMarkerIf(store.StopPath, markerRaw)
 		}
 		tx.Data.Control.Stage = Stopping
 		return nil
@@ -305,10 +375,8 @@ func (c *Controller) Resume(parentID, prURL string, replace bool) (StartResult, 
 	}
 	control := state.Control
 	ticketFile := ticketPath(store.Path)
-	stopPending := false
-	if _, err := os.Stat(store.StopPath); err == nil {
-		stopPending = true
-	} else if !errors.Is(err, os.ErrNotExist) {
+	stopPending, err := stopMarkerPending(store)
+	if err != nil {
 		return StartResult{}, err
 	}
 	rotate := replace || control.AgentID == "" && control.Stage == NeedsAttention

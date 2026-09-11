@@ -24,8 +24,9 @@ const (
 )
 
 type Controller struct {
-	Root string
-	Now  func() time.Time
+	Root               string
+	Now                func() time.Time
+	beforeReopenCommit func()
 }
 
 type StartOptions struct {
@@ -422,6 +423,9 @@ func (c *Controller) startReopenedGeneration(store *Store, ticketFile, parentID 
 		}
 		stopMoved = true
 	}
+	if c.beforeReopenCommit != nil {
+		c.beforeReopenCommit()
+	}
 	rollback := func(cause error) error {
 		var rollbackErrs []error
 		store.Data = oldData
@@ -452,6 +456,13 @@ func (c *Controller) startReopenedGeneration(store *Store, ticketFile, parentID 
 		Control: newControl(parentID, watchID, oldControl.Cwd, digest(ticket.Nonce), c.Now().UTC(), Options{Interval: interval, Quiet: quiet}),
 	}
 	if err := store.Save(); err != nil {
+		return StartResult{}, rollback(err)
+	}
+	// A stop request can be recreated by a caller that read the old generation
+	// while the marker was being moved.  Once the new state is durable, retire
+	// only such stale generation markers; a same-generation request remains
+	// pending for the new worker.
+	if _, err := stopMarkerPending(store); err != nil {
 		return StartResult{}, rollback(err)
 	}
 	return startResult(store, ticketFile, true), nil

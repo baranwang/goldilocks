@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"strings"
 	"time"
 )
@@ -153,10 +152,7 @@ func Watch(ctx context.Context, s *Store, options Options, deps Dependencies) (j
 	if s.Data.Collecting != nil {
 		cycle.QuietDeadline = deps.Now().Add(options.Quiet)
 	}
-	stopped := func() bool {
-		_, err := os.Stat(s.StopPath)
-		return err == nil
-	}
+	isStopped := func() bool { return stopped(s) }
 
 	for {
 		if hasPending(s) {
@@ -165,19 +161,19 @@ func Watch(ctx context.Context, s *Store, options Options, deps Dependencies) (j
 		if s.Data.Finished {
 			return finishedEnvelope(s)
 		}
-		if stopped() {
+		if isStopped() {
 			return s.Stop(deps.Now())
 		}
 
 		started := deps.Now()
-		snapshot, readErr := deps.Read(ctx, s.PR, stopped)
+		snapshot, readErr := deps.Read(ctx, s.PR, isStopped)
 		outcome, err := s.ApplyPoll(snapshot, readErr, started, deps.Now(), options, cycle)
 		if err != nil || outcome.Event != nil {
 			return outcome.Event, err
 		}
 		cycle = outcome.Cycle
 		next := deps.Now().Add(outcome.Delay)
-		for deps.Now().Before(next) && !stopped() {
+		for deps.Now().Before(next) && !isStopped() {
 			if err := deps.Wait(ctx, min(time.Second, next.Sub(deps.Now()))); err != nil {
 				return nil, err
 			}
