@@ -34,11 +34,14 @@ func (c *Controller) Advance(ctx context.Context, ticketFile, agentID string, de
 		}
 		control := tx.Data.Control
 		if control.Stage == NeedsAttention {
-			action = advanceAction(control, "attention", control.FailureCode, 0)
+			action = attentionAction(control, s.Path)
 			return nil
 		}
 		if hasPending(tx) {
 			action, err = tx.Offer(c.Now())
+			if err == nil && action.Action == "attention" {
+				action = attentionAction(tx.Data.Control, s.Path)
+			}
 			return err
 		}
 		terminal = tx.Data.Finished
@@ -54,6 +57,8 @@ func (c *Controller) Advance(ctx context.Context, ticketFile, agentID string, de
 	event, err := c.PollManaged(ctx, s, deps)
 	if err != nil {
 		switch {
+		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+			return Action{}, err
 		case errors.Is(err, ErrBusy):
 			return c.busyAdvance(s)
 		case errors.Is(err, ErrYielded):
@@ -67,9 +72,55 @@ func (c *Controller) Advance(ctx context.Context, ticketFile, agentID string, de
 	}
 	err = managedUpdate(s, func(tx *Store) error {
 		action, err = tx.Offer(c.Now())
+		if err == nil && action.Action == "attention" {
+			action = attentionAction(tx.Data.Control, s.Path)
+		}
 		return err
 	})
 	return action, err
+}
+
+// Inspect reports ticket-scoped worker state without polling, offering a
+// delivery message, or advancing durable progress.
+func (c *Controller) Inspect(ticketFile, agentID string) (Action, error) {
+	if !validUUID(agentID) {
+		return Action{}, errors.New("agent_id must be a UUID")
+	}
+	ticket, stateFile, err := c.readManagedTicket(ticketFile)
+	if err != nil {
+		return Action{}, err
+	}
+	store, err := c.Open(ticket.ParentID, ticket.PRURL)
+	if err != nil {
+		return Action{}, err
+	}
+	if store.Path != stateFile {
+		return Action{}, errors.New("ticket state path mismatch")
+	}
+	state, err := ReadState(stateFile)
+	if err != nil {
+		return Action{}, err
+	}
+	if !ticketMatches(state, ticket) || state.Control.AgentID != agentID {
+		return Action{}, errors.New("ticket is not authorized for this child")
+	}
+	control := state.Control
+	if control.Stage == NeedsAttention {
+		return attentionAction(control, stateFile), nil
+	}
+	if control.Stage == Finished || state.Finished {
+		return advanceAction(control, "finished", "", 0), nil
+	}
+	worker, err := c.WorkerStatus(store)
+	if err != nil {
+		return Action{}, err
+	}
+	if worker.Locked {
+		action := advanceAction(control, "wait", "worker_running", 1)
+		action.ThreadID = control.Worker.HostHandle
+		return action, nil
+	}
+	return advanceAction(control, "wait", "worker_released", 1), nil
 }
 
 func advanceAction(control *Control, action, reason string, retry int) Action {
@@ -128,7 +179,7 @@ func (c *Controller) yieldedAdvance(s *Store) (Action, error) {
 		return Action{}, err
 	}
 	if state.Control.Stage == NeedsAttention {
-		return advanceAction(state.Control, "attention", state.Control.FailureCode, 0), nil
+		return attentionAction(state.Control, s.Path), nil
 	}
 	return advanceAction(state.Control, "wait", "worker_yielded", 1), nil
 }
@@ -141,10 +192,20 @@ func (c *Controller) faultAdvance(s *Store, code string, cause error) (Action, e
 		control.FailureCode = code
 		control.FailureDetail = cause.Error()
 		control.FaultSeen = true
-		action = advanceAction(control, "attention", code, 0)
+		action = attentionAction(control, s.Path)
 		return nil
 	})
 	return action, err
+}
+
+func attentionAction(control *Control, stateFile string) Action {
+	action := advanceAction(control, "attention", control.FailureCode, 0)
+	action.EventID = ""
+	action.Part = 0
+	action.Parts = 0
+	action.ThreadID = control.ParentID
+	action.Prompt = fmt.Sprintf("Goldilocks PR watcher needs attention for watch %s. Failure code: %s. State file: %s.", control.WatchID, control.FailureCode, stateFile)
+	return action
 }
 
 var ErrYielded = errors.New("current execution yielded; state preserved")

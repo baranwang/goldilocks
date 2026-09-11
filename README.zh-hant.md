@@ -39,7 +39,7 @@ codex plugin add goldilocks@goldilocks
 
 `SessionStart` 和 `SubagentStart` 鉤子會注入一段來自 `skills/model-routing/SKILL.md` 的精簡策略。在執行已經規劃好的 `spawn_agent` 呼叫前，目前的代理會保留使用者的明確設定、檢查工具的 schema、判斷子任務類型，最後只修改受支援的 `model` 和 `reasoning_effort` 欄位。
 
-一個 Go CLI 提供 hooks、PR 監聽和 watcher 登記。
+一個 Go CLI 提供 hooks、PR 監聽和受控 watcher 生命週期。
 線上 PR 讀取使用已登入的 gh。
 新變化預設在觀察到 30 秒靜默後合併投遞。
 本版 PR 監聽支援 macOS/Linux；Windows 支援 hooks。
@@ -57,11 +57,13 @@ Goldilocks 只使用目前 `spawn_agent` schema 公開的值，不預設固定�
 
 ## PR 監聽
 
-要求監聽一個 PR，或使用 `$pr-watch`。主任務接收 CI、留言和審查證據；子代理獨占輪詢、投遞、確認和清理，直到合併、關閉或明確停止。預設輪詢間隔為 60 秒。監聽不授權發文、推送或合併。
+要求監聽一個 PR，或使用 `$pr-watch`。主任務先執行 `watcher start`，它只保存 starting 意圖並返回 ticket，不代表輪詢已經執行。子代理執行 `watcher advance --ticket-file ...`，透過 App 訊息工具傳送每個 action 返回的原文，然後重複執行，直到 controller 返回 `finished` 或 `attention`。只有 status 顯示 `ready=true` 且觀察到 polling（或已確認的投遞窗口）後，主任務才能報告監聽已啟動。預設輪詢間隔為 60 秒，觀察靜默窗口為 30 秒。監聽不授權發文、推送或合併。
 
-單獨 skill 僅含指令，需要已有相容 CLI。
-沒有已載入且受信任的 hooks 時，子代理跳過 watcher 登記並明確告知缺少生命週期保障。缺少相容 CLI 時無法啟動監聽。
-機器休眠、應用程式退出、硬中斷或額度耗盡時不保證繼續。工具等待可能消耗 token，並非零成本常駐程式。
+主任務會校驗每個事件的執行時 UUID、PR、watch/event ID 和 part，等待所有 part，跳過重複事件，並在修改程式碼前重新讀取目前 PR 和 head。`watcher stop` 只是請求；只有子代理傳送完待處理證據且 status 顯示 `finished` 與 `cleanup_confirmed=true` 後才能報告停止。
+
+舊版 v2/v3 standalone 狀態不會被 managed controller 靜默接管。停止舊執行，並在確認 PR 已重新開啟後使用 `watcher import --pr URL --state-file PATH` 遷移。舊的 register、checkpoint、finish、fail 命令已退役，會返回明確的遷移錯誤；managed 狀態使用 `start/status/stop/resume/received`，子代理使用 `advance/yield`。
+
+單獨 skill 僅含指令，需要已有相容 CLI。hooks 未載入且未受信任時，應報告缺少生命週期保障；hooks 檔案或信任設定變更後必須完整重啟 Desktop 才能依賴其執行。缺少相容 CLI 時無法啟動監聽。機器休眠、應用程式退出、硬中斷或額度耗盡時尚無經過測試的連續執行保障。工具等待可能消耗 token，並非零成本常駐程式。
 
 ## 授權條款
 

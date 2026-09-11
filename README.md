@@ -55,7 +55,7 @@ current agent preserves explicit user choices, checks the tool schema,
 classifies the child task, and changes only supported `model` and
 `reasoning_effort` fields.
 
-One Go CLI provides hooks, PR monitoring, and watcher registration. A thin
+One Go CLI provides hooks, PR monitoring, and the managed watcher controller. A thin
 shell/PowerShell launcher downloads the matching `v<plugin-version>` GitHub
 Release binary on first use, checks its SHA-256 against `scripts/SHA256SUMS`,
 and caches it under `PLUGIN_DATA`. Subsequent calls reuse the verified cache.
@@ -89,15 +89,33 @@ model routing.
 
 ## PR monitoring
 
-Ask to monitor a PR, or use `$pr-watch`. The main task receives CI, comments,
-and review evidence; its child owns polling, delivery, acknowledgements, and
-cleanup until merge, closure, or an explicit stop. The default poll interval is
-60 seconds. Monitoring does not authorize posting, pushing, or merging.
+Ask to monitor a PR, or use `$pr-watch`. The parent first runs `watcher start`,
+which records a starting intent and returns a ticket; it does not claim a
+running poller. The child executes `watcher advance --ticket-file ...`, sends
+each exact action prompt through the App message tool, and repeats until the
+controller returns `finished` or `attention`. The parent reports active only
+after status shows `ready=true` and a live poll or confirmed delivery window.
+The default poll interval is 60 seconds and observed quiet window is 30 seconds.
+Monitoring does not authorize posting, pushing, or merging.
+
+The parent validates each received event's runtime UUID, PR URL, watch/event ID,
+and part number before acting. It waits for every part, skips duplicates, and
+rereads the current PR/head before code changes. `watcher stop` is a request;
+stopped is reported only after the child has delivered pending evidence and
+status confirms `finished` plus `cleanup_confirmed=true`.
+
+Existing v2/v3 standalone state is not silently reused by the managed
+controller. Stop the old execution, then use the later
+`watcher import --pr URL --state-file PATH` migration command after verifying that the PR has
+reopened. A managed state must use `watcher start/status/stop/resume/received`
+and the child `advance/yield` actions; the old registration, checkpoint,
+finish, and fail commands are retired with an explicit migration error.
 
 Standalone skills contain instructions only and require a compatible CLI.
-Without loaded, trusted hooks, the child skips watcher registration and reports
-missing lifecycle protection. No compatible CLI means monitoring cannot start.
-Local monitoring cannot guarantee continuation during machine sleep, app exit,
+Without loaded and trusted hooks, report missing lifecycle protection; hook
+files and trust changes require a full Desktop restart before their execution
+can be relied on. No compatible CLI means monitoring cannot start. Local
+monitoring has no tested continuity guarantee during machine sleep, app exit,
 hard interruption, or quota exhaustion. Tool waits can consume tokens; this is
 not a zero-cost daemon.
 
