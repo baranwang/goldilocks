@@ -508,13 +508,23 @@ func (c *Controller) startReopenedGeneration(store *Store, ticketFile, parentID 
 		return StartResult{}, errors.New("finished generation stop marker archive already exists")
 	}
 
-	watchID, err := newUUID()
-	if err != nil {
-		return StartResult{}, err
-	}
-	ticket, err := newTicket(watchID, parentID, store.PR.URL)
-	if err != nil {
-		return StartResult{}, err
+	// A crash after the active ticket was replaced but before the new state was
+	// published leaves the candidate ticket beside the finished old state.  If
+	// the old generation's archive is already complete, reuse that candidate
+	// rather than trying to archive it as the old ticket on retry.
+	candidate, candidateRecovery := recoveredReopenTicket(oldControl, oldState, oldTicket, ticketErr, archiveState, archiveTicket, parentID, store.PR.URL)
+	watchID, ticket := "", Ticket{}
+	if candidateRecovery {
+		watchID, ticket = candidate.WatchID, candidate
+	} else {
+		watchID, err = newUUID()
+		if err != nil {
+			return StartResult{}, err
+		}
+		ticket, err = newTicket(watchID, parentID, store.PR.URL)
+		if err != nil {
+			return StartResult{}, err
+		}
 	}
 	archiveStateCreated, err := ensureArchiveFile(archiveState, oldState)
 	if err != nil {
@@ -529,7 +539,7 @@ func (c *Controller) startReopenedGeneration(store *Store, ticketFile, parentID 
 			_ = os.Remove(archiveTicket)
 		}
 	}
-	if ticketErr == nil {
+	if ticketErr == nil && !candidateRecovery {
 		archiveTicketCreated, err = ensureArchiveFile(archiveTicket, oldTicket)
 		if err != nil {
 			cleanupArchive()
@@ -589,6 +599,29 @@ func (c *Controller) startReopenedGeneration(store *Store, ticketFile, parentID 
 	return startResult(store, ticketFile, true), nil
 }
 
+func recoveredReopenTicket(oldControl *Control, oldState, activeRaw []byte, activeErr error, archiveState, archiveTicket, parentID, prURL string) (Ticket, bool) {
+	if activeErr != nil || oldControl == nil {
+		return Ticket{}, false
+	}
+	candidate, err := decodeTicket(activeRaw)
+	if err != nil || candidate.WatchID == oldControl.WatchID || candidate.ParentID != parentID || candidate.PRURL != prURL {
+		return Ticket{}, false
+	}
+	archivedState, err := os.ReadFile(archiveState)
+	if err != nil || !bytes.Equal(archivedState, oldState) {
+		return Ticket{}, false
+	}
+	archivedRaw, err := os.ReadFile(archiveTicket)
+	if err != nil {
+		return Ticket{}, false
+	}
+	archived, err := decodeTicket(archivedRaw)
+	if err != nil || archived.WatchID != oldControl.WatchID || archived.ParentID != parentID || archived.PRURL != prURL || digest(archived.Nonce) != oldControl.TicketSHA256 {
+		return Ticket{}, false
+	}
+	return candidate, true
+}
+
 func resolveStartOptions(opts StartOptions) (time.Duration, time.Duration, error) {
 	if opts.Interval < 0 || opts.Quiet < 0 {
 		return 0, 0, errors.New("interval and quiet must not be negative")
@@ -612,9 +645,22 @@ func newTicket(watchID, parentID, prURL string) (Ticket, error) {
 }
 
 func readTicket(path string) (Ticket, error) {
-	var ticket Ticket
-	if err := readStrictJSON(path, &ticket); err != nil {
+	raw, err := os.ReadFile(path)
+	if err != nil {
 		return Ticket{}, err
+	}
+	return decodeTicket(raw)
+}
+
+func decodeTicket(raw []byte) (Ticket, error) {
+	var ticket Ticket
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&ticket); err != nil {
+		return Ticket{}, err
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		return Ticket{}, errors.New("trailing JSON")
 	}
 	pr, err := ParsePR(ticket.PRURL)
 	nonce, nonceErr := hex.DecodeString(ticket.Nonce)

@@ -243,85 +243,116 @@ func (c *Controller) Receive(parentID, prURL, eventID string, part int) (string,
 		return "", err
 	}
 	result := ""
-	err = managedUpdate(s, func(tx *Store) error {
-		control := tx.Data.Control
-		if control.ParentID != parentID {
-			return errors.New("watch does not belong to parent")
+	err = c.withParentLock(parentID, func() error {
+		archived, err := c.archivedDeliveries(s.PR, parentID, eventID)
+		if err != nil {
+			return err
 		}
-		var delivery Delivery
-		outbox := control.Outbox != nil && control.Outbox.EventID == eventID
-		if outbox {
-			delivery = *control.Outbox
-		} else {
-			var ok bool
-			delivery, ok = control.History[eventID]
-			if !ok {
-				return errDeliveryNotFound
+		if len(archived) > 1 {
+			return errors.New("delivery event is ambiguous")
+		}
+		managedErr := managedUpdate(s, func(tx *Store) error {
+			control := tx.Data.Control
+			if control.ParentID != parentID {
+				return errors.New("watch does not belong to parent")
 			}
-		}
-		if part > len(delivery.Parts) {
-			return errors.New("delivery part is out of range")
-		}
-		if delivery.Parts[part-1].Received {
-			result = "duplicate"
+			var delivery Delivery
+			outbox := control.Outbox != nil && control.Outbox.EventID == eventID
+			if outbox {
+				if len(archived) != 0 {
+					return errors.New("delivery event is ambiguous")
+				}
+				delivery = *control.Outbox
+			} else {
+				var ok bool
+				delivery, ok = control.History[eventID]
+				if !ok {
+					return errDeliveryNotFound
+				}
+				if len(archived) != 0 {
+					return errors.New("delivery event is ambiguous")
+				}
+			}
+			if part > len(delivery.Parts) {
+				return errors.New("delivery part is out of range")
+			}
+			if delivery.Parts[part-1].Received {
+				result = "duplicate"
+				return nil
+			}
+			delivery.Parts[part-1].Received = true
+			result = "event_complete"
+			for _, current := range delivery.Parts {
+				if !current.Received {
+					result = "new_part"
+					break
+				}
+			}
+			if outbox {
+				control.Outbox = &delivery
+			} else {
+				control.History[eventID] = delivery
+			}
 			return nil
+		})
+		if errors.Is(managedErr, errDeliveryNotFound) && len(archived) == 1 {
+			var archiveErr error
+			result, archiveErr = c.receiveArchivedCandidate(archived[0], eventID, part)
+			return archiveErr
 		}
-		delivery.Parts[part-1].Received = true
-		result = "event_complete"
-		for _, current := range delivery.Parts {
-			if !current.Received {
-				result = "new_part"
-				break
-			}
+		if errors.Is(managedErr, errDeliveryNotFound) && len(archived) > 1 {
+			return errors.New("delivery event is ambiguous")
 		}
-		if outbox {
-			control.Outbox = &delivery
-		} else {
-			control.History[eventID] = delivery
-		}
-		return nil
+		return managedErr
 	})
-	if errors.Is(err, errDeliveryNotFound) {
-		return c.receiveArchived(s.PR, parentID, eventID, part)
-	}
 	return result, err
 }
 
-func (c *Controller) receiveArchived(pr PR, parentID, eventID string, part int) (string, error) {
+type archiveCandidate struct {
+	pr       PR
+	path     string
+	delivery Delivery
+}
+
+func (c *Controller) archivedDeliveries(pr PR, parentID, eventID string) ([]archiveCandidate, error) {
 	historyDir := filepath.Join(c.parentDir(parentID), "history")
 	if err := c.validateManagedDir(historyDir); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", err
+		return nil, err
 	}
 	entries, err := os.ReadDir(historyDir)
 	if errors.Is(err, os.ErrNotExist) {
-		return "", errDeliveryNotFound
+		return nil, nil
 	}
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	type candidate struct {
-		path     string
-		delivery Delivery
-	}
-	var found []candidate
+	var found []archiveCandidate
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
 		path := filepath.Join(historyDir, entry.Name())
 		if err := c.rejectSymlinkedFile(path); err != nil {
-			return "", err
+			return nil, err
 		}
 		state, err := ReadState(path)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		if state.PRURL != pr.URL || state.Control == nil || state.Control.ParentID != parentID {
 			continue
 		}
 		if delivery, ok := state.Control.History[eventID]; ok {
-			found = append(found, candidate{path: path, delivery: delivery})
+			found = append(found, archiveCandidate{pr: pr, path: path, delivery: delivery})
 		}
+	}
+	return found, nil
+}
+
+func (c *Controller) receiveArchived(pr PR, parentID, eventID string, part int) (string, error) {
+	found, err := c.archivedDeliveries(pr, parentID, eventID)
+	if err != nil {
+		return "", err
 	}
 	if len(found) == 0 {
 		return "", errDeliveryNotFound
@@ -329,12 +360,16 @@ func (c *Controller) receiveArchived(pr PR, parentID, eventID string, part int) 
 	if len(found) != 1 {
 		return "", errors.New("delivery event is ambiguous")
 	}
-	if part > len(found[0].delivery.Parts) {
+	return c.receiveArchivedCandidate(found[0], eventID, part)
+}
+
+func (c *Controller) receiveArchivedCandidate(candidate archiveCandidate, eventID string, part int) (string, error) {
+	if part > len(candidate.delivery.Parts) {
 		return "", errors.New("delivery part is out of range")
 	}
-	archived := &Store{PR: pr, Path: found[0].path, StopPath: filepath.Join(filepath.Dir(found[0].path), entryStem(found[0].path)+".stop")}
+	archived := &Store{PR: candidate.pr, Path: candidate.path, StopPath: filepath.Join(filepath.Dir(candidate.path), entryStem(candidate.path)+".stop")}
 	result := ""
-	err = managedUpdate(archived, func(tx *Store) error {
+	err := managedUpdate(archived, func(tx *Store) error {
 		delivery, ok := tx.Data.Control.History[eventID]
 		if !ok {
 			return errDeliveryNotFound

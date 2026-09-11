@@ -276,6 +276,121 @@ func TestReceiveFindsLatePartInArchivedGeneration(t *testing.T) {
 	}
 }
 
+func TestReceiveRejectsActiveAndArchivedDuplicateEvent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("managed import")
+	}
+	c, err := NewController(t.TempDir(), func() time.Time { return specTime })
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, err := c.Start(specParent, t.TempDir(), specPR, StartOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := c.Open(specParent, specPR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(func(tx *Store) error {
+		tx.Data.Finished = true
+		tx.Data.Control.Stage = Finished
+		tx.Data.Control.Worker = Execution{Ended: true}
+		tx.Data.Control.History["duplicate-event"] = Delivery{EventID: "duplicate-event", Kind: "initial", Parts: []DeliveryPart{{SHA256: strings.Repeat("a", 64)}}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := c.Start(specParent, t.TempDir(), specPR, StartOptions{Reopened: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := c.Open(specParent, specPR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := current.Update(func(tx *Store) error {
+		tx.Data.Control.History["duplicate-event"] = Delivery{EventID: "duplicate-event", Kind: "initial", Parts: []DeliveryPart{{SHA256: strings.Repeat("a", 64)}}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Receive(specParent, specPR, "duplicate-event", 1); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("duplicate active/archive event was attributed: %v", err)
+	}
+	_ = start
+	_ = reopened
+}
+
+func TestReopenRecoversCandidateTicketAfterArchive(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("managed import")
+	}
+	c, err := NewController(t.TempDir(), func() time.Time { return specTime })
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, err := c.Start(specParent, t.TempDir(), specPR, StartOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := c.Open(specParent, specPR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(func(tx *Store) error {
+		tx.Data.Finished = true
+		tx.Data.Control.Stage = Finished
+		tx.Data.Control.Worker = Execution{Ended: true}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	oldState, err := encodeJSON(store.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldTicket, err := os.ReadFile(start.TicketFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	history := filepath.Join(filepath.Dir(store.Path), "history")
+	if err := os.MkdirAll(history, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(history, start.WatchID+".json"), oldState, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(history, start.WatchID+".ticket"), oldTicket, 0600); err != nil {
+		t.Fatal(err)
+	}
+	candidateID, err := newUUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := newTicket(candidateID, specParent, specPR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON0600(start.TicketFile, candidate); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := c.Start(specParent, t.TempDir(), specPR, StartOptions{Reopened: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.WatchID != candidateID {
+		t.Fatalf("candidate ticket was not recovered: got %s want %s", reopened.WatchID, candidateID)
+	}
+	state, err := ReadState(store.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Control.WatchID != candidateID || state.Control.Stage != Starting {
+		t.Fatalf("candidate state was not published: %#v", state.Control)
+	}
+}
+
 func TestImportAcknowledgedBaselineRequestsRefresh(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("managed import")
