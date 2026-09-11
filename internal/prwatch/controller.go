@@ -344,6 +344,7 @@ func finishedGeneration(state State) bool {
 
 func (c *Controller) startReopenedGeneration(store *Store, ticketFile, parentID string, interval, quiet time.Duration) (StartResult, error) {
 	oldControl := store.Data.Control
+	oldData := store.Data
 	oldState, err := encodeJSON(store.Data)
 	if err != nil {
 		return StartResult{}, err
@@ -357,14 +358,39 @@ func (c *Controller) startReopenedGeneration(store *Store, ticketFile, parentID 
 		return StartResult{}, err
 	}
 	archiveState := filepath.Join(archiveDir, oldControl.WatchID+".json")
-	if err := os.WriteFile(archiveState, oldState, 0600); err != nil {
+	archiveTicket := filepath.Join(archiveDir, oldControl.WatchID+".ticket")
+	archiveStop := filepath.Join(archiveDir, oldControl.WatchID+".stop")
+	if err := c.rejectSymlinkedFile(archiveState); err != nil {
 		return StartResult{}, err
 	}
-	if ticketErr == nil {
-		if err := os.WriteFile(filepath.Join(archiveDir, oldControl.WatchID+".ticket"), oldTicket, 0600); err != nil {
-			return StartResult{}, err
-		}
+	if err := c.rejectSymlinkedFile(archiveTicket); err != nil {
+		return StartResult{}, err
 	}
+	if err := c.rejectSymlinkedFile(archiveStop); err != nil {
+		return StartResult{}, err
+	}
+	stopInfo, stopErr := os.Lstat(store.StopPath)
+	if errors.Is(stopErr, os.ErrNotExist) {
+		stopInfo = nil
+	} else if stopErr != nil {
+		return StartResult{}, stopErr
+	} else if !stopInfo.Mode().IsRegular() {
+		return StartResult{}, errors.New("managed stop marker is not a regular file")
+	} else if err := c.rejectSymlinkedFile(store.StopPath); err != nil {
+		return StartResult{}, err
+	}
+	archivedStopInfo, archivedStopErr := os.Lstat(archiveStop)
+	if errors.Is(archivedStopErr, os.ErrNotExist) {
+		archivedStopInfo = nil
+	} else if archivedStopErr != nil {
+		return StartResult{}, archivedStopErr
+	} else if !archivedStopInfo.Mode().IsRegular() {
+		return StartResult{}, errors.New("archived stop marker is not a regular file")
+	}
+	if stopInfo != nil && archivedStopInfo != nil {
+		return StartResult{}, errors.New("finished generation stop marker archive already exists")
+	}
+
 	watchID, err := newUUID()
 	if err != nil {
 		return StartResult{}, err
@@ -373,8 +399,52 @@ func (c *Controller) startReopenedGeneration(store *Store, ticketFile, parentID 
 	if err != nil {
 		return StartResult{}, err
 	}
-	if err := writeJSON0600(ticketFile, ticket); err != nil {
+	if err := os.WriteFile(archiveState, oldState, 0600); err != nil {
 		return StartResult{}, err
+	}
+	cleanupArchive := func() {
+		_ = os.Remove(archiveState)
+		if ticketErr == nil {
+			_ = os.Remove(archiveTicket)
+		}
+	}
+	if ticketErr == nil {
+		if err := os.WriteFile(archiveTicket, oldTicket, 0600); err != nil {
+			cleanupArchive()
+			return StartResult{}, err
+		}
+	}
+	stopMoved := archivedStopInfo != nil
+	if stopInfo != nil {
+		if err := os.Rename(store.StopPath, archiveStop); err != nil {
+			cleanupArchive()
+			return StartResult{}, err
+		}
+		stopMoved = true
+	}
+	rollback := func(cause error) error {
+		var rollbackErrs []error
+		store.Data = oldData
+		if err := writeJSON0600(store.Path, json.RawMessage(oldState)); err != nil {
+			rollbackErrs = append(rollbackErrs, fmt.Errorf("restore state: %w", err))
+		}
+		if ticketErr == nil {
+			if err := os.WriteFile(ticketFile, oldTicket, 0600); err != nil {
+				rollbackErrs = append(rollbackErrs, fmt.Errorf("restore ticket: %w", err))
+			}
+		} else if err := os.Remove(ticketFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+			rollbackErrs = append(rollbackErrs, fmt.Errorf("restore missing ticket: %w", err))
+		}
+		if stopMoved {
+			if err := os.Rename(archiveStop, store.StopPath); err != nil {
+				rollbackErrs = append(rollbackErrs, fmt.Errorf("restore stop marker: %w", err))
+			}
+		}
+		cleanupArchive()
+		return errors.Join(append([]error{cause}, rollbackErrs...)...)
+	}
+	if err := writeJSON0600(ticketFile, ticket); err != nil {
+		return StartResult{}, rollback(err)
 	}
 	store.Data = State{
 		Version: 4,
@@ -382,7 +452,7 @@ func (c *Controller) startReopenedGeneration(store *Store, ticketFile, parentID 
 		Control: newControl(parentID, watchID, oldControl.Cwd, digest(ticket.Nonce), c.Now().UTC(), Options{Interval: interval, Quiet: quiet}),
 	}
 	if err := store.Save(); err != nil {
-		return StartResult{}, err
+		return StartResult{}, rollback(err)
 	}
 	return startResult(store, ticketFile, true), nil
 }

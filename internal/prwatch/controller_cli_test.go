@@ -276,6 +276,9 @@ func TestControllerCLIReopenedFinishedGenerationStartsNewWatch(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(store.StopPath, []byte("stale stop\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	release, err := store.Lock(false)
 	if err != nil {
 		t.Fatal(err)
@@ -308,6 +311,55 @@ func TestControllerCLIReopenedFinishedGenerationStartsNewWatch(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(store.Path), "history", start.WatchID+".json")); err != nil {
 		t.Fatalf("finished generation was not archived: %v", err)
+	}
+	if _, err := os.Stat(store.StopPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale stop marker survived reopened generation: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(store.Path), "history", start.WatchID+".stop")); err != nil {
+		t.Fatalf("old stop marker was not archived: %v", err)
+	}
+}
+
+func TestControllerCLIReopenedFailurePreservesStopMarker(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("managed POSIX CLI")
+	}
+	c, start, store := boundFixture(t)
+	if err := store.Update(func(tx *Store) error {
+		tx.Data.Finished = true
+		tx.Data.Control.Stage = Finished
+		tx.Data.Control.Worker = Execution{}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.StopPath, []byte("stale stop\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	history := filepath.Join(filepath.Dir(store.Path), "history")
+	if err := os.MkdirAll(history, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(history, start.WatchID+".stop"), []byte("occupied\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	oldTicket, err := os.ReadFile(start.TicketFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Start(specParent, t.TempDir(), specPR, StartOptions{Reopened: true}); err == nil {
+		t.Fatal("reopened rotation ignored an occupied archive marker")
+	}
+	if _, err := os.Stat(store.StopPath); err != nil {
+		t.Fatalf("failed reopen did not preserve stop marker: %v", err)
+	}
+	newTicket, err := os.ReadFile(start.TicketFile)
+	if err != nil || !bytes.Equal(oldTicket, newTicket) {
+		t.Fatalf("failed reopen changed the active ticket: %v", err)
+	}
+	state, err := ReadState(store.Path)
+	if err != nil || state.Control.WatchID != start.WatchID || !state.Finished {
+		t.Fatalf("failed reopen changed the active generation: state=%+v err=%v", state.Control, err)
 	}
 }
 

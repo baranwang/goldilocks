@@ -6,6 +6,7 @@
 - Parent actions derive their namespace from the supplied runtime UUID; child actions authenticate the runtime UUID against the managed ticket. Explicit zero, negative, NaN, and infinite polling values are rejected while omitted values retain the 60-second/30-second defaults.
 - Added ticket-scoped `advance --inspect` and `Controller.Inspect`, which validates the bound child through the same ticket path as `advance`, reports `worker_running` or `worker_released` without polling, offering, or incrementing progress, and waits until terminal stage cleanup is durable before returning `finished`. Attention actions include the parent destination and deterministic failure-report prompt.
 - Explicit `start --reopened` archives a verified finished generation and creates a new watch ID, ticket, and unbound child intent; a live worker lock blocks rotation.
+- Reopened generation creation rotates any stale stop marker before publishing the new state while holding the worker lock; occupied archive targets or write failures restore the original marker, state, and ticket intact.
 - Managed advance now propagates context cancellation/deadline errors so the main adapter can return exit code 130 instead of converting cancellation into a false attention success.
 - Replaced the old registration/checkpoint/finish/fail adapter with the thin context-aware `RunWatcherCLI`; watcher commands now map cancellation to 130 and lock conflicts to 3 in the main CLI. Retired lifecycle names return the exact migration message.
 - Replaced stale watcher tests with managed-controller and adapter assertions.
@@ -41,6 +42,13 @@ PASS
 
 rtk proxy env GOTOOLCHAIN=go1.25.6 go test ./cmd/goldilocks -run 'TestWatcherDeadlineUsesCancellationExitCode' -count=1
 PASS
+
+rtk proxy env GOTOOLCHAIN=go1.25.6 go test ./internal/prwatch -run 'TestControllerCLIReopened(FinishedGenerationStartsNewWatch|FailurePreservesStopMarker)$' -count=1 -v
+PASS
+
+The reopened generation path moves a stale `.stop` marker before publishing
+the new state, then restores the old state, ticket, and marker if publication
+fails. This prevents a stale stop request from terminating a fresh generation.
 
 rtk proxy env GOTOOLCHAIN=go1.25.6 go test ./internal/prwatch -run 'TestControllerAdvancePropagatesCancellation|TestControllerCLI' -count=1
 PASS
