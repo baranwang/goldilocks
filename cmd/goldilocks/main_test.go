@@ -308,3 +308,17 @@ func TestVersionDoesNotNeedTools(t *testing.T) {
 		t.Fatal("unknown action must fail")
 	}
 }
+
+func TestWatcherDeadlineUsesCancellationExitCode(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	t.Setenv("CODEX_THREAD_ID", runtimeParent)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	var out, diagnostics bytes.Buffer
+	if code := RunCLI(ctx, []string{"watcher", "start", "--pr", "https://github.com/example/project/pull/17"}, strings.NewReader(""), &out, &diagnostics); code != 130 {
+		t.Fatalf("deadline watcher exit code: %d (%q)", code, diagnostics.String())
+	}
+	if out.Len() != 0 || !strings.Contains(diagnostics.String(), "context deadline exceeded") {
+		t.Fatalf("unexpected deadline output: %q %q", out.String(), diagnostics.String())
+	}
+}

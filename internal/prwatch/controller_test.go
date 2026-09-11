@@ -528,8 +528,8 @@ func TestStartResumesMissingTicketOnlyWhenExplicit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resumed.WatchID != first.WatchID || resumed.TicketFile != first.TicketFile || !resumed.Spawn {
-		t.Fatalf("wrong resumed intent: %#v", resumed)
+	if resumed.WatchID == first.WatchID || resumed.TicketFile != first.TicketFile || resumed.StateFile != first.StateFile || !resumed.Spawn || resumed.AgentID != "" {
+		t.Fatalf("reopened start did not create a new child generation: %#v", resumed)
 	}
 }
 

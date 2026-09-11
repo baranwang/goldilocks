@@ -37,7 +37,7 @@ func RunCLI(ctx context.Context, args []string, input io.Reader, output, diagnos
 			return 0
 		}
 		fmt.Fprintln(diagnostics, "goldilocks:", err)
-		if errors.Is(err, context.Canceled) {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return 130
 		}
 		if errors.Is(err, prwatch.ErrLocked) {
@@ -50,7 +50,7 @@ func RunCLI(ctx context.Context, args []string, input io.Reader, output, diagnos
 		defer cancel()
 		if err := RunWatcherCLI(runCtx, args[1:], output); err != nil {
 			fmt.Fprintln(diagnostics, "goldilocks:", err)
-			if errors.Is(err, context.Canceled) {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return 130
 			}
 			if errors.Is(err, prwatch.ErrLocked) {

@@ -86,30 +86,13 @@ func (c *Controller) Inspect(ticketFile, agentID string) (Action, error) {
 	if !validUUID(agentID) {
 		return Action{}, errors.New("agent_id must be a UUID")
 	}
-	ticket, stateFile, err := c.readManagedTicket(ticketFile)
+	store, err := c.bindTicket(ticketFile, agentID, false)
 	if err != nil {
 		return Action{}, err
 	}
-	store, err := c.Open(ticket.ParentID, ticket.PRURL)
-	if err != nil {
-		return Action{}, err
-	}
-	if store.Path != stateFile {
-		return Action{}, errors.New("ticket state path mismatch")
-	}
-	state, err := ReadState(stateFile)
-	if err != nil {
-		return Action{}, err
-	}
-	if !ticketMatches(state, ticket) || state.Control.AgentID != agentID {
-		return Action{}, errors.New("ticket is not authorized for this child")
-	}
-	control := state.Control
+	control := store.Data.Control
 	if control.Stage == NeedsAttention {
-		return attentionAction(control, stateFile), nil
-	}
-	if control.Stage == Finished || state.Finished {
-		return advanceAction(control, "finished", "", 0), nil
+		return attentionAction(control, store.Path), nil
 	}
 	worker, err := c.WorkerStatus(store)
 	if err != nil {
@@ -119,6 +102,18 @@ func (c *Controller) Inspect(ticketFile, agentID string) (Action, error) {
 		action := advanceAction(control, "wait", "worker_running", 1)
 		action.ThreadID = control.Worker.HostHandle
 		return action, nil
+	}
+	if store.Data.Finished {
+		// Terminal business state may be durable before finishAdvance has
+		// settled the stage and worker metadata. Keep the child alive to run
+		// advance again until cleanup is durably confirmed.
+		if control.Stage != Finished || hasPending(store) || store.Data.Collecting != nil || control.Outbox != nil || control.Worker.ID != "" && !control.Worker.Ended {
+			return advanceAction(control, "wait", "worker_released", 1), nil
+		}
+		return advanceAction(control, "finished", "", 0), nil
+	}
+	if control.Stage == Finished {
+		return advanceAction(control, "wait", "worker_released", 1), nil
 	}
 	return advanceAction(control, "wait", "worker_released", 1), nil
 }

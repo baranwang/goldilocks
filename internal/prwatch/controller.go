@@ -197,6 +197,13 @@ func (c *Controller) ObserveStart(parentID, agentID, turnID string) error {
 }
 
 func (c *Controller) Bind(ticketFile, agentID string) (*Store, error) {
+	return c.bindTicket(ticketFile, agentID, true)
+}
+
+// bindTicket validates a ticket and child identity under the parent lock. When
+// allowNew is false, it only accepts an already-bound ticket; this is used by
+// ticket-scoped inspection so validation cannot mutate durable progress.
+func (c *Controller) bindTicket(ticketFile, agentID string, allowNew bool) (*Store, error) {
 	if !validUUID(agentID) {
 		return nil, errors.New("agent_id must be a UUID")
 	}
@@ -234,6 +241,9 @@ func (c *Controller) Bind(ticketFile, agentID string) (*Store, error) {
 						return errors.New("watch is bound to a different child")
 					}
 					return nil
+				}
+				if !allowNew {
+					return errors.New("ticket is not bound to this child")
 				}
 				if c.Now().UTC().After(control.BindAfter.Add(bindLifetime)) {
 					return errors.New("unbound watch intent expired")
@@ -280,6 +290,21 @@ func (c *Controller) resumeIntent(store *Store, ticketFile, parentID string, opt
 	if control == nil || control.ParentID != parentID {
 		return StartResult{}, errors.New("existing state is not a managed watch")
 	}
+	if opts.Reopened && finishedGeneration(store.Data) {
+		releaseWorker, err := store.Lock(false)
+		if err != nil {
+			return StartResult{}, err
+		}
+		result, startErr := c.startReopenedGeneration(store, ticketFile, parentID, interval, quiet)
+		releaseErr := releaseWorker()
+		if startErr != nil {
+			return StartResult{}, startErr
+		}
+		if releaseErr != nil {
+			return StartResult{}, releaseErr
+		}
+		return result, nil
+	}
 	if control.AgentID == "" && control.Stage == Starting && c.Now().UTC().After(control.BindAfter.Add(bindLifetime)) {
 		return StartResult{}, errors.New("unbound watch intent expired")
 	}
@@ -308,6 +333,58 @@ func (c *Controller) resumeIntent(store *Store, ticketFile, parentID string, opt
 		return StartResult{}, err
 	}
 	return startResult(store, ticketFile, control.AgentID == ""), nil
+}
+
+func finishedGeneration(state State) bool {
+	control := state.Control
+	return state.Finished && control != nil && control.Stage == Finished &&
+		!hasPendingState(state) && state.Collecting == nil && control.Outbox == nil &&
+		(control.Worker.ID == "" || control.Worker.Ended)
+}
+
+func (c *Controller) startReopenedGeneration(store *Store, ticketFile, parentID string, interval, quiet time.Duration) (StartResult, error) {
+	oldControl := store.Data.Control
+	oldState, err := encodeJSON(store.Data)
+	if err != nil {
+		return StartResult{}, err
+	}
+	oldTicket, ticketErr := os.ReadFile(ticketFile)
+	if ticketErr != nil && !errors.Is(ticketErr, os.ErrNotExist) {
+		return StartResult{}, ticketErr
+	}
+	archiveDir := filepath.Join(filepath.Dir(store.Path), "history")
+	if err := c.ensureManagedDir(archiveDir); err != nil {
+		return StartResult{}, err
+	}
+	archiveState := filepath.Join(archiveDir, oldControl.WatchID+".json")
+	if err := os.WriteFile(archiveState, oldState, 0600); err != nil {
+		return StartResult{}, err
+	}
+	if ticketErr == nil {
+		if err := os.WriteFile(filepath.Join(archiveDir, oldControl.WatchID+".ticket"), oldTicket, 0600); err != nil {
+			return StartResult{}, err
+		}
+	}
+	watchID, err := newUUID()
+	if err != nil {
+		return StartResult{}, err
+	}
+	ticket, err := newTicket(watchID, parentID, store.PR.URL)
+	if err != nil {
+		return StartResult{}, err
+	}
+	if err := writeJSON0600(ticketFile, ticket); err != nil {
+		return StartResult{}, err
+	}
+	store.Data = State{
+		Version: 4,
+		PRURL:   store.PR.URL,
+		Control: newControl(parentID, watchID, oldControl.Cwd, digest(ticket.Nonce), c.Now().UTC(), Options{Interval: interval, Quiet: quiet}),
+	}
+	if err := store.Save(); err != nil {
+		return StartResult{}, err
+	}
+	return startResult(store, ticketFile, true), nil
 }
 
 func resolveStartOptions(opts StartOptions) (time.Duration, time.Duration, error) {

@@ -197,6 +197,9 @@ func TestControllerCLIInspectDoesNotOfferOrAdvance(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
+	if err := c.RunCLI(context.Background(), []string{"advance", "--ticket-file", start.TicketFile, "--inspect"}, specParent, t.TempDir(), &out); err == nil || out.Len() != 0 {
+		t.Fatal("inspect accepted the wrong bound child")
+	}
 	if err := c.RunCLI(context.Background(), []string{"advance", "--ticket-file", start.TicketFile, "--inspect"}, specChild, t.TempDir(), &out); err != nil {
 		t.Fatal(err)
 	}
@@ -213,6 +216,98 @@ func TestControllerCLIInspectDoesNotOfferOrAdvance(t *testing.T) {
 	}
 	if after.Control.Progress != state.Control.Progress {
 		t.Fatal("inspect advanced durable progress")
+	}
+}
+
+func TestControllerCLIInspectWaitsForTerminalCleanup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("managed POSIX CLI")
+	}
+	c, start, store := boundFixture(t)
+	if err := store.Update(func(tx *Store) error {
+		tx.Data.Finished = true
+		tx.Data.Control.Stage = Running
+		tx.Data.Control.Worker = Execution{ID: specWatch}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	release, err := store.Lock(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := c.RunCLI(context.Background(), []string{"advance", "--ticket-file", start.TicketFile, "--inspect"}, specChild, t.TempDir(), &out); err != nil {
+		release()
+		t.Fatal(err)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	var action Action
+	if err := json.Unmarshal(out.Bytes(), &action); err != nil {
+		t.Fatal(err)
+	}
+	if action.Action != "wait" || action.Reason != "worker_running" {
+		t.Fatalf("inspect fabricated completion while worker was held: %+v", action)
+	}
+	out.Reset()
+	if err := c.RunCLI(context.Background(), []string{"advance", "--ticket-file", start.TicketFile, "--inspect"}, specChild, t.TempDir(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(out.Bytes(), &action); err != nil {
+		t.Fatal(err)
+	}
+	if action.Action != "wait" || action.Reason != "worker_released" {
+		t.Fatalf("inspect fabricated completion before stage cleanup: %+v", action)
+	}
+}
+
+func TestControllerCLIReopenedFinishedGenerationStartsNewWatch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("managed POSIX CLI")
+	}
+	c, start, store := boundFixture(t)
+	if err := store.Update(func(tx *Store) error {
+		tx.Data.Finished = true
+		tx.Data.Control.Stage = Finished
+		tx.Data.Control.Worker = Execution{ID: specWatch, Ended: true}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	release, err := store.Lock(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Start(specParent, t.TempDir(), specPR, StartOptions{Reopened: true}); !errors.Is(err, ErrLocked) {
+		release()
+		t.Fatalf("reopened start ignored a live worker lock: %v", err)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	oldTicket, err := os.ReadFile(start.TicketFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := c.RunCLI(context.Background(), []string{"start", "--pr", specPR, "--reopened"}, specParent, t.TempDir(), &out); err != nil {
+		t.Fatal(err)
+	}
+	var reopened StartResult
+	if err := json.Unmarshal(out.Bytes(), &reopened); err != nil {
+		t.Fatal(err)
+	}
+	newTicket, err := os.ReadFile(reopened.TicketFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reopened.Spawn || reopened.AgentID != "" || reopened.WatchID == start.WatchID || bytes.Equal(oldTicket, newTicket) {
+		t.Fatalf("reopened start reused finished generation: old=%+v new=%+v", start, reopened)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(store.Path), "history", start.WatchID+".json")); err != nil {
+		t.Fatalf("finished generation was not archived: %v", err)
 	}
 }
 
