@@ -27,6 +27,33 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__codex_app__send_message_to_thread",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/scripts/goldilocks.sh\" hook",
+            "commandWindows": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$env:PLUGIN_ROOT/scripts/goldilocks.ps1\" hook; exit $LASTEXITCODE",
+            "timeout": 150,
+            "statusMessage": "Recording PR watcher delivery"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/scripts/goldilocks.sh\" hook",
+            "commandWindows": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$env:PLUGIN_ROOT/scripts/goldilocks.ps1\" hook; exit $LASTEXITCODE",
+            "timeout": 150,
+            "statusMessage": "Checking PR watcher startup"
+          }
+        ]
+      }
+    ],
     "SubagentStop": [
       {
         "hooks": [

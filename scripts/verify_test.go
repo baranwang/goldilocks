@@ -2,11 +2,53 @@ package main
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestControllerHooksHavePortableLaunchers(t *testing.T) {
+	raw, err := os.ReadFile("../hooks/hooks.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Hooks map[string][]struct {
+			Hooks []struct{ Command, CommandWindows string }
+		}
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"SessionStart", "SubagentStart", "PostToolUse", "SubagentStop", "Stop"} {
+		groups := config.Hooks[name]
+		if len(groups) != 1 || len(groups[0].Hooks) != 1 {
+			t.Fatal(name)
+		}
+		h := groups[0].Hooks[0]
+		if h.Command == "" || h.CommandWindows == "" {
+			t.Fatal("missing launcher", name)
+		}
+	}
+}
+
+func TestUnrelatedSmokeRejectsControllerState(t *testing.T) {
+	controllerRoot := filepath.Join(t.TempDir(), "goldilocks", "pr-watch")
+	if err := checkUnrelatedSmoke("PostToolUse", nil, controllerRoot); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(controllerRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkUnrelatedSmoke("PostToolUse", nil, controllerRoot); err == nil {
+		t.Fatal("created controller state was accepted")
+	}
+	if err := checkUnrelatedSmoke("PostToolUse", []byte("{}\n"), filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("unexpected output was accepted")
+	}
+}
 
 func TestReleaseChecksumGate(t *testing.T) {
 	t.Chdir(t.TempDir())

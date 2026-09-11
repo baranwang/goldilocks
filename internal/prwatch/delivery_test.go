@@ -1,0 +1,388 @@
+package prwatch
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func deliveryFixture(t *testing.T) (*Controller, StartResult, *Store, Action) {
+	t.Helper()
+	c, r, s := boundFixture(t)
+	err := s.Update(func(tx *Store) error {
+		_, err := tx.Stage("initial", managedSnapshot(), Changes{}, nil, nil, specTime)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := c.Advance(context.Background(), r.TicketFile, specChild, Dependencies{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Action != "send" {
+		t.Fatal(a)
+	}
+	return c, r, s, a
+}
+
+func TestSendAcceptanceRequiresExactDestinationAndBody(t *testing.T) {
+	c, _, s, a := deliveryFixture(t)
+	for _, bad := range []ObservedSend{
+		{specChild, specWatch, "bad-target", a.Prompt, true, specTime},
+		{specChild, specParent, "bad-body", a.Prompt + "changed", true, specTime},
+		{specWatch, specParent, "bad-agent", a.Prompt, true, specTime},
+		{specChild, specParent, "failed", a.Prompt, false, specTime},
+	} {
+		_ = c.AcceptSend(bad)
+	}
+	state, err := ReadState(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Control.Outbox.Parts[0].Receipt != nil {
+		t.Fatal("false receipt")
+	}
+	good := ObservedSend{specChild, specParent, "call-1", a.Prompt, true, specTime}
+	if err := c.AcceptSend(good); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AcceptSend(good); err != nil {
+		t.Fatal(err)
+	}
+	state, err = ReadState(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.LastAck != nil {
+		t.Fatal("receipt alone acknowledged business event")
+	}
+}
+
+func TestAcceptedEventCommitsAtomicallyAfterRestart(t *testing.T) {
+	c, _, s, a := deliveryFixture(t)
+	err := c.AcceptSend(ObservedSend{specChild, specParent, "call-1", a.Prompt, true, specTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := c.Open(specParent, specPR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := again.Update(func(tx *Store) error { return tx.CommitAccepted() }); err != nil {
+		t.Fatal(err)
+	}
+	state, err := ReadState(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	history := state.Control.History[a.EventID]
+	if state.LastAck == nil || *state.LastAck != a.EventID || state.Control.Outbox != nil ||
+		!state.Control.InitialAccepted || len(history.Parts) != 1 || history.Parts[0].Prompt != "" {
+		t.Fatal("acceptance did not commit baseline and history together")
+	}
+}
+
+func multipartDeliveryFixture(t *testing.T) (*Controller, StartResult, *Store, Action) {
+	t.Helper()
+	c, r, s := boundFixture(t)
+	changes := Changes{"comments": map[string]any{"1": map[string]any{
+		"body": strings.Repeat("界", 12500), "author": "reviewer", "url": specPR,
+	}}}
+	if err := s.Update(func(tx *Store) error {
+		_, err := tx.Stage("update", managedSnapshot(), changes, nil, nil, specTime)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	a, err := c.Advance(context.Background(), r.TicketFile, specChild, Dependencies{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Action != "send" || a.Part != 1 || a.Parts != 3 {
+		t.Fatalf("first multipart offer: %#v", a)
+	}
+	return c, r, s, a
+}
+
+func TestMultipartReceiptResumesExactNextPartAfterRestart(t *testing.T) {
+	c, r, s, first := multipartDeliveryFixture(t)
+	if !strings.Contains(first.Prompt, " · Run: "+s.Data.Control.WatchID) {
+		t.Fatal("managed run identity missing from frozen prompt")
+	}
+	if err := c.AcceptSend(ObservedSend{specChild, specParent, "call-1", first.Prompt, true, specTime}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := ReadState(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := state.Control.Outbox.Parts[1].Prompt
+	restarted, err := NewController(c.Root, func() time.Time { return specTime })
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := restarted.Advance(context.Background(), r.TicketFile, specChild, Dependencies{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Action != "send" || next.Part != 2 || next.Prompt != want {
+		t.Fatalf("resumed wrong part: %#v", next)
+	}
+}
+
+func TestReceiptRejectsFuturePartAndConflictingCallID(t *testing.T) {
+	c, _, s, first := multipartDeliveryFixture(t)
+	state, err := ReadState(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := state.Control.Outbox.Parts[1].Prompt
+	if err := c.AcceptSend(ObservedSend{specChild, specParent, "future", second, true, specTime}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AcceptSend(ObservedSend{specChild, specParent, "call-1", first.Prompt, true, specTime}); err != nil {
+		t.Fatal(err)
+	}
+	state, err = ReadState(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	progress := state.Control.Progress
+	if state.Control.Outbox.Parts[1].Receipt != nil {
+		t.Fatal("future part accepted")
+	}
+	if err := c.AcceptSend(ObservedSend{specChild, specParent, "call-1", second, true, specTime}); err == nil {
+		t.Fatal("conflicting call id accepted")
+	}
+	if err := c.AcceptSend(ObservedSend{specChild, specParent, "call-2", first.Prompt, true, specTime}); err != nil {
+		t.Fatal(err)
+	}
+	state, err = ReadState(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Control.Progress != progress {
+		t.Fatal("repeated accepted content counted as new progress")
+	}
+}
+
+func TestOfferRetriesAreDelayedAndBounded(t *testing.T) {
+	c, r, s, _ := deliveryFixture(t)
+	now := specTime.Add(4 * time.Second)
+	c.Now = func() time.Time { return now }
+	wait, err := c.Advance(context.Background(), r.TicketFile, specChild, Dependencies{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wait.Action != "wait" || wait.RetryAfterSeconds != 1 {
+		t.Fatalf("retry was not delayed: %#v", wait)
+	}
+	state, err := ReadState(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	progress := state.Control.Progress
+	pending := append([]byte(nil), state.Pending...)
+	for offer := 2; offer <= 3; offer++ {
+		now = specTime.Add(time.Duration(offer-1) * 5 * time.Second)
+		a, err := c.Advance(context.Background(), r.TicketFile, specChild, Dependencies{})
+		if err != nil || a.Action != "send" {
+			t.Fatalf("offer %d: %#v, %v", offer, a, err)
+		}
+	}
+	now = specTime.Add(15 * time.Second)
+	attention, err := c.Advance(context.Background(), r.TicketFile, specChild, Dependencies{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err = ReadState(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attention.Action != "attention" || attention.Reason != "delivery_receipt_missing" ||
+		state.Control.Outbox == nil || state.Control.Progress != progress || !bytes.Equal(state.Pending, pending) ||
+		state.Finished || state.Control.Ready {
+		t.Fatalf("unbounded or destructive retries: %#v %#v", attention, state.Control)
+	}
+}
+
+func TestReceiveDeduplicatesParentPartsWithoutTransportReceipt(t *testing.T) {
+	c, _, s, first := multipartDeliveryFixture(t)
+	for _, step := range []struct {
+		part int
+		want string
+	}{{3, "new_part"}, {1, "new_part"}, {2, "event_complete"}, {2, "duplicate"}} {
+		got, err := c.Receive(specParent, specPR, first.EventID, step.part)
+		if err != nil || got != step.want {
+			t.Fatalf("receive part %d: %q, %v", step.part, got, err)
+		}
+	}
+	state, err := ReadState(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, part := range state.Control.Outbox.Parts {
+		if part.Receipt != nil || !part.Received {
+			t.Fatal("reception fabricated a receipt or lost a part")
+		}
+	}
+	if state.LastAck != nil || state.Control.Ready {
+		t.Fatal("reception advanced business state")
+	}
+}
+
+func TestCommitAcceptedRollsBackWithOuterTransaction(t *testing.T) {
+	c, _, s, a := deliveryFixture(t)
+	if err := c.AcceptSend(ObservedSend{specChild, specParent, "call-1", a.Prompt, true, specTime}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := ReadState(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforePending := append([]byte(nil), before.Pending...)
+	rollback := errors.New("stop before outer save")
+	if err := s.Update(func(tx *Store) error {
+		if err := tx.CommitAccepted(); err != nil {
+			return err
+		}
+		return rollback
+	}); !errors.Is(err, rollback) {
+		t.Fatal(err)
+	}
+	after, err := ReadState(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after.Pending, beforePending) || after.LastAck != nil || after.Control.Outbox == nil || len(after.Control.History) != 0 {
+		t.Fatal("failed outer transaction partially committed acceptance")
+	}
+}
+
+func TestTerminalCommitAcceptedKeepsStopMarkerOnSaveFailure(t *testing.T) {
+	c, r, s := boundFixture(t)
+	terminal := managedSnapshot()
+	terminal["state"] = "MERGED"
+	if err := s.Update(func(tx *Store) error {
+		_, err := tx.Stage("merged", terminal, Changes{}, nil, nil, specTime)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	offer, err := c.Advance(context.Background(), r.TicketFile, specChild, Dependencies{})
+	if err != nil || offer.Action != "send" {
+		t.Fatal(offer, err)
+	}
+	if err := c.AcceptSend(ObservedSend{specChild, specParent, "terminal-save-failure", offer.Prompt, true, specTime}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.StopPath, []byte("stop\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Update(func(tx *Store) error {
+		if err := tx.CommitAccepted(); err != nil {
+			return err
+		}
+		tx.Path = filepath.Join(t.TempDir(), "missing", "state.json")
+		return nil
+	}); err == nil {
+		t.Fatal("outer save failure was not reported")
+	}
+	if _, err := os.Stat(s.StopPath); err != nil {
+		t.Fatalf("stop marker was removed before outer save committed: %v", err)
+	}
+	state, err := ReadState(s.Path)
+	if err != nil || state.Pending == nil || state.Control.Outbox == nil || state.Finished {
+		t.Fatalf("failed commit changed durable state: %#v", state)
+	}
+}
+
+func TestAdvancePollsThenOffersPendingEvent(t *testing.T) {
+	c, r, s := boundFixture(t)
+	a, err := c.Advance(context.Background(), r.TicketFile, specChild, Dependencies{
+		Read: func(context.Context, PR, func() bool) (Snapshot, error) { return managedSnapshot(), nil },
+		Now:  func() time.Time { return specTime },
+		Wait: func(ctx context.Context, _ time.Duration) error { <-ctx.Done(); return ctx.Err() },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Action != "send" || a.Part != 1 || !strings.Contains(a.Prompt, " · Run: "+s.Data.Control.WatchID) {
+		t.Fatalf("poll result was not offered: %#v", a)
+	}
+}
+
+func TestAdvancePersistsPollingFaultWithoutErasingPending(t *testing.T) {
+	c, r, s := boundFixture(t)
+	readErr := errors.New("credential helper failed")
+	a, err := c.Advance(context.Background(), r.TicketFile, specChild, Dependencies{
+		Read: func(context.Context, PR, func() bool) (Snapshot, error) { return nil, readErr },
+		Now:  func() time.Time { return specTime },
+		Wait: func(ctx context.Context, _ time.Duration) error { <-ctx.Done(); return ctx.Err() },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := ReadState(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Action != "attention" || state.Control.Stage != NeedsAttention ||
+		state.Control.FailureCode == "" || !strings.Contains(state.Control.FailureDetail, readErr.Error()) || hasPendingState(state) {
+		t.Fatalf("polling fault was not persisted: %#v %#v", a, state.Control)
+	}
+}
+
+func TestTerminalAcceptanceWaitsForWorkerLockBeforeFinishedStage(t *testing.T) {
+	c, r, s := boundFixture(t)
+	terminal := managedSnapshot()
+	terminal["state"] = "MERGED"
+	if err := s.Update(func(tx *Store) error {
+		_, err := tx.Stage("merged", terminal, Changes{}, nil, nil, specTime)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	offer, err := c.Advance(context.Background(), r.TicketFile, specChild, Dependencies{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AcceptSend(ObservedSend{specChild, specParent, "terminal", offer.Prompt, true, specTime}); err != nil {
+		t.Fatal(err)
+	}
+	release, err := s.Lock(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wait, err := c.Advance(context.Background(), r.TicketFile, specChild, Dependencies{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := ReadState(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wait.Action != "wait" || state.Control.Stage == Finished || state.Control.Ready {
+		t.Fatalf("terminal lock fabricated completion: %#v %#v", wait, state.Control)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	finished, err := c.Advance(context.Background(), r.TicketFile, specChild, Dependencies{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err = ReadState(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished.Action != "finished" || state.Control.Stage != Finished {
+		t.Fatalf("terminal state did not finish after lock release: %#v %#v", finished, state.Control)
+	}
+}

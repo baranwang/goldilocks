@@ -63,6 +63,9 @@ func TestV2PendingAndManifestSurviveUpgrade(t *testing.T) {
 	s = mustStore(t, dir)
 	release, err := s.Lock(false)
 	check(t, err)
+	if s.Data.Version != 2 {
+		t.Fatalf("status-style lock migrated legacy state: version=%d", s.Data.Version)
+	}
 	check(t, release())
 	before, err := os.ReadFile(s.Path)
 	check(t, err)
@@ -174,6 +177,20 @@ func TestReadStateValidatesShapeAndKeepsLargeNumbers(t *testing.T) {
 				t.Fatal("invalid state was modified")
 			}
 		})
+	}
+}
+
+func TestReadStateRejectsNullManagedControlWithoutWriting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	raw := fmt.Sprintf(`{"version":4,"pr_url":%q,"snapshot":null,"pending":null,"last_ack":null,"error":null,"finished":false,"collecting":null,"control":null}`, testPR)
+	check(t, os.WriteFile(path, []byte(raw), 0600))
+	if _, err := pw.ReadState(path); err == nil {
+		t.Fatal("accepted null managed control")
+	}
+	after, err := os.ReadFile(path)
+	check(t, err)
+	if string(after) != raw {
+		t.Fatal("invalid state was modified")
 	}
 }
 

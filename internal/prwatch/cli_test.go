@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -116,6 +117,301 @@ func TestPRWatchCLIFlagsOfflineActionsAndExitCodes(t *testing.T) {
 	if code != 2 || !strings.Contains(diagnostic, "UTF-8") {
 		t.Fatalf("invalid body: code=%d diagnostic=%q", code, diagnostic)
 	}
+}
+
+func TestBuiltWatcherControllerStartAndStatus(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("managed POSIX CLI")
+	}
+	binary := buildCLI(t)
+	home := t.TempDir()
+	env := replaceEnv(os.Environ(), "CODEX_HOME", home)
+	env = replaceEnv(env, "CODEX_THREAD_ID", "00000000-0000-4000-8000-000000000001")
+	run := func(args ...string) (int, string, string) {
+		t.Helper()
+		cmd := exec.Command(binary, append([]string{"watcher"}, args...)...)
+		cmd.Env = env
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err := cmd.Run()
+		if err == nil {
+			return 0, stdout.String(), stderr.String()
+		}
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) {
+			t.Fatal(err)
+		}
+		return exit.ExitCode(), stdout.String(), stderr.String()
+	}
+	code, output, diagnostic := run("start", "--pr", testPR)
+	if code != 0 || diagnostic != "" {
+		t.Fatalf("managed start: code=%d output=%s diagnostic=%s", code, output, diagnostic)
+	}
+	var started pw.StartResult
+	decodeJSONText(t, output, &started)
+	if !started.Spawn || started.TicketFile == "" || started.StateFile == "" {
+		t.Fatalf("unexpected start result: %+v", started)
+	}
+	code, output, diagnostic = run("status", "--pr", testPR)
+	if code != 0 || diagnostic != "" {
+		t.Fatalf("managed status: code=%d output=%s diagnostic=%s", code, output, diagnostic)
+	}
+	var status pw.Status
+	decodeJSONText(t, output, &status)
+	if status.Ready || status.Stage != pw.Starting || status.Activity != "awaiting_binding" {
+		t.Fatalf("start was reported active: %+v", status)
+	}
+}
+
+func TestStandaloneCLIRejectsManagedMutations(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("managed POSIX CLI")
+	}
+	root := t.TempDir()
+	controller, err := pw.NewController(root, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := "00000000-0000-4000-8000-000000000041"
+	start, err := controller.Start(parent, t.TempDir(), testPR, pw.StartOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	err = pw.RunCLI(context.Background(), []string{"prepare", "--pr", testPR, "--state-dir", filepath.Dir(start.StateFile)}, &output)
+	if err == nil || !strings.Contains(err.Error(), "managed state") || output.Len() != 0 {
+		t.Fatalf("standalone mutation was not rejected: err=%v output=%q", err, output.String())
+	}
+}
+
+func TestBuiltWatcherControllerConcurrentStartAndReceiptLifecycle(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("managed POSIX CLI")
+	}
+	binary := buildCLI(t)
+	parentID := "00000000-0000-4000-8000-000000000021"
+	childID := "00000000-0000-4000-8000-000000000022"
+	turnID := "00000000-0000-4000-8000-000000000023"
+	home := t.TempDir()
+	fakeDir := t.TempDir()
+	graphqlFile := filepath.Join(fakeDir, "threads.json")
+	metaCount := filepath.Join(fakeDir, "metadata-count")
+	nodes := make([]map[string]any, 16)
+	for i := range nodes {
+		label := fmt.Sprintf("thread-body-%02d", i+1)
+		body := label + " " + strings.Repeat("unresolved review evidence ", 120)
+		nodes[i] = map[string]any{
+			"id":         fmt.Sprintf("THREAD-%02d", i+1),
+			"isResolved": false,
+			"isOutdated": false,
+			"comments": map[string]any{
+				"nodes": []any{map[string]any{
+					"id": fmt.Sprintf("COMMENT-%02d", i+1), "body": body,
+					"author": map[string]any{"login": "reviewer"},
+				}},
+				"pageInfo": map[string]any{"hasNextPage": false, "endCursor": nil},
+			},
+		}
+	}
+	graphqlRaw, err := json.Marshal(map[string]any{"data": map[string]any{
+		"repository": map[string]any{"pullRequest": map[string]any{
+			"reviewThreads": map[string]any{
+				"nodes": nodes, "pageInfo": map[string]any{"hasNextPage": false, "endCursor": nil},
+			},
+		}},
+	}})
+	check(t, err)
+	check(t, os.WriteFile(graphqlFile, graphqlRaw, 0600))
+	gh := filepath.Join(fakeDir, "gh")
+	script := `#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  count=$(cat "$PR_WATCH_META_COUNT" 2>/dev/null || echo 0)
+  count=$((count + 1))
+  printf '%s' "$count" > "$PR_WATCH_META_COUNT"
+  head=abc123
+  if [ "$count" -gt 1 ]; then head=def456; fi
+  printf '%s\n' "{\"url\":\"https://github.com/example/project/pull/7\",\"number\":7,\"state\":\"OPEN\",\"isDraft\":false,\"mergeable\":\"MERGEABLE\",\"mergeStateStatus\":\"CLEAN\",\"headRefOid\":\"$head\"}"
+  exit 0
+fi
+case "$*" in
+  *graphql*) cat "$PR_WATCH_GRAPHQL" ;;
+  *check-runs*) printf '%s\n' '[{"check_runs":[]}]' ;;
+  *'/status?'*) printf '%s\n' '[{"statuses":[]}]' ;;
+  *) printf '%s\n' '[[]]' ;;
+esac
+`
+	check(t, os.WriteFile(gh, []byte(script), 0700))
+	env := replaceEnv(os.Environ(), "CODEX_HOME", home)
+	env = replaceEnv(env, "CODEX_THREAD_ID", parentID)
+	env = replaceEnv(env, "PATH", fakeDir+":/bin:/usr/bin")
+	env = replaceEnv(env, "PR_WATCH_GRAPHQL", graphqlFile)
+	env = replaceEnv(env, "PR_WATCH_META_COUNT", metaCount)
+	pluginRoot := t.TempDir()
+	check(t, os.MkdirAll(filepath.Join(pluginRoot, "skills", "model-routing"), 0700))
+	check(t, os.WriteFile(filepath.Join(pluginRoot, "skills", "model-routing", "SKILL.md"), []byte("# Router"), 0600))
+	env = replaceEnv(env, "PLUGIN_ROOT", pluginRoot)
+
+	type result struct {
+		code, errCode   int
+		out, diagnostic string
+	}
+	start := func() result {
+		cmd := exec.Command(binary, "watcher", "start", "--pr", testPR, "--interval", "0.01", "--quiet-seconds", "0.01")
+		cmd.Env = env
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err := cmd.Run()
+		code := 0
+		if err != nil {
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) {
+				t.Fatalf("concurrent start: %v", err)
+			}
+			code = exit.ExitCode()
+		}
+		return result{code: code, out: stdout.String(), diagnostic: stderr.String()}
+	}
+	gate := make(chan struct{})
+	results := make(chan result, 2)
+	go func() { <-gate; results <- start() }()
+	go func() { <-gate; results <- start() }()
+	close(gate)
+	first, second := <-results, <-results
+	if first.code != 0 || second.code != 0 || first.diagnostic != "" || second.diagnostic != "" {
+		t.Fatalf("concurrent starts failed: %#v %#v", first, second)
+	}
+	var started, duplicate pw.StartResult
+	decodeJSONText(t, first.out, &started)
+	decodeJSONText(t, second.out, &duplicate)
+	if started.WatchID == "" || started.WatchID != duplicate.WatchID || started.TicketFile == "" || started.TicketFile != duplicate.TicketFile || started.StateFile != duplicate.StateFile {
+		t.Fatalf("concurrent starts diverged: %+v %+v", started, duplicate)
+	}
+
+	run := func(runEnv []string, args ...string) result {
+		t.Helper()
+		cmd := exec.Command(binary, args...)
+		cmd.Env = runEnv
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err := cmd.Run()
+		code := 0
+		if err != nil {
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) {
+				t.Fatal(err)
+			}
+			code = exit.ExitCode()
+		}
+		return result{code: code, out: stdout.String(), diagnostic: stderr.String()}
+	}
+	statusResult := run(env, "watcher", "status", "--pr", testPR)
+	if statusResult.code != 0 || statusResult.diagnostic != "" {
+		t.Fatalf("startup status: %#v", statusResult)
+	}
+	var status pw.Status
+	decodeJSONText(t, statusResult.out, &status)
+	if status.Ready || status.Stage != pw.Starting || status.Activity != "awaiting_binding" {
+		t.Fatalf("startup passed before child binding: %+v", status)
+	}
+
+	childEnv := replaceEnv(env, "CODEX_THREAD_ID", childID)
+	startEvent, err := json.Marshal(map[string]any{
+		"hook_event_name": "SubagentStart", "session_id": parentID, "agent_id": childID, "turn_id": turnID,
+	})
+	check(t, err)
+	hook := func(input []byte) result {
+		cmd := exec.Command(binary, "hook")
+		cmd.Env = env
+		cmd.Stdin = bytes.NewReader(input)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err := cmd.Run()
+		code := 0
+		if err != nil {
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) {
+				t.Fatal(err)
+			}
+			code = exit.ExitCode()
+		}
+		return result{code: code, out: stdout.String(), diagnostic: stderr.String()}
+	}
+	if got := hook(startEvent); got.code != 0 || got.diagnostic != "" {
+		t.Fatalf("subagent start hook: %#v", got)
+	}
+
+	advance := func() (pw.Action, result) {
+		got := run(childEnv, "watcher", "advance", "--ticket-file", started.TicketFile)
+		if got.code != 0 || got.diagnostic != "" {
+			t.Fatalf("advance: %#v", got)
+		}
+		var action pw.Action
+		decodeJSONText(t, got.out, &action)
+		return action, got
+	}
+	receipt := func(action pw.Action, call int) {
+		input, err := json.Marshal(map[string]any{"threadId": parentID, "prompt": action.Prompt})
+		check(t, err)
+		response, err := json.Marshal(map[string]any{"isError": false, "content": []any{map[string]any{
+			"type": "text", "text": fmt.Sprintf(`{"threadId":%q}`, parentID),
+		}}})
+		check(t, err)
+		event, err := json.Marshal(map[string]any{
+			"hook_event_name": "PostToolUse", "agent_id": childID,
+			"tool_name": "mcp__codex_app__send_message_to_thread", "tool_use_id": "receipt-" + strconv.Itoa(call),
+			"tool_input": json.RawMessage(input), "tool_response": json.RawMessage(response),
+		})
+		check(t, err)
+		got := hook(event)
+		if got.code != 0 || got.diagnostic != "" {
+			t.Fatalf("post-tool receipt: %#v", got)
+		}
+	}
+
+	action, _ := advance()
+	if action.Action != "send" || action.Parts < 2 || action.EventID == "" {
+		t.Fatalf("initial advance did not offer multipart event: %+v", action)
+	}
+	initialEvent := action.EventID
+	initialParts := action.Parts
+	var prompts []string
+	for part := 1; part <= initialParts; part++ {
+		if action.Action != "send" || action.EventID != initialEvent || action.Part != part {
+			t.Fatalf("initial part %d was not offered in order: %+v", part, action)
+		}
+		prompts = append(prompts, action.Prompt)
+		receipt(action, part)
+		if part < initialParts {
+			action, _ = advance()
+		}
+	}
+	statusResult = run(env, "watcher", "status", "--pr", testPR)
+	if statusResult.code != 0 || statusResult.diagnostic != "" {
+		t.Fatalf("pre-readiness status: %#v", statusResult)
+	}
+	decodeJSONText(t, statusResult.out, &status)
+	if status.Ready {
+		t.Fatalf("startup became ready before the next poll: %+v", status)
+	}
+	action, _ = advance()
+	if action.Action != "send" || action.EventID == "" || action.EventID == initialEvent {
+		t.Fatalf("next poll did not produce a new event: %+v", action)
+	}
+	allPrompts := strings.Join(prompts, "\n")
+	for i := 1; i <= 16; i++ {
+		if !strings.Contains(allPrompts, fmt.Sprintf("thread-body-%02d", i)) {
+			t.Fatalf("multipart frozen messages lost unresolved thread body %02d", i)
+		}
+	}
+	statusResult = run(env, "watcher", "status", "--pr", testPR)
+	if statusResult.code != 0 || statusResult.diagnostic != "" {
+		t.Fatalf("ready status: %#v", statusResult)
+	}
+	decodeJSONText(t, statusResult.out, &status)
+	if !status.Ready || status.Stage != pw.Running {
+		t.Fatalf("watcher did not become ready after all parts and a next poll: %+v", status)
+	}
+	receipt(action, initialParts+1)
 }
 
 func TestBuiltCLIWaitsAndExitsOnMergeOrCancellation(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 	"unicode"
@@ -95,6 +96,10 @@ func ReadState(path string) (State, error) {
 	if err != nil {
 		return State{}, err
 	}
+	return decodeState(raw)
+}
+
+func decodeState(raw []byte) (State, error) {
 	fields, err := objectFields(raw)
 	if err != nil {
 		return State{}, err
@@ -106,13 +111,27 @@ func ReadState(path string) (State, error) {
 	if err := decodeJSON(raw, &state); err != nil {
 		return State{}, err
 	}
-	if state.Version != 2 && state.Version != 3 {
-		return State{}, fmt.Errorf("unsupported state version %d", state.Version)
-	}
-	if state.Version == 3 {
+	switch state.Version {
+	case 2:
+		if _, exists := fields["control"]; exists {
+			return State{}, errors.New("control requires state version 4")
+		}
+	case 3:
 		if err := require(fields, "collecting"); err != nil {
 			return State{}, err
 		}
+		if _, exists := fields["control"]; exists {
+			return State{}, errors.New("control requires state version 4")
+		}
+	case 4:
+		if err := require(fields, "collecting", "control"); err != nil {
+			return State{}, err
+		}
+		if isNull(fields["control"]) {
+			return State{}, errors.New("state version 4 requires non-null control")
+		}
+	default:
+		return State{}, fmt.Errorf("unsupported state version %d", state.Version)
 	}
 	pr, err := ParsePR(state.PRURL)
 	if err != nil || pr.URL != state.PRURL {
@@ -139,10 +158,13 @@ func ReadState(path string) (State, error) {
 			return State{}, fmt.Errorf("pending: %w", err)
 		}
 	}
-	if state.Version == 3 && !isNull(fields["collecting"]) {
+	if state.Version >= 3 && !isNull(fields["collecting"]) {
 		if err := validateCollecting(fields["collecting"]); err != nil {
 			return State{}, fmt.Errorf("collecting: %w", err)
 		}
+	}
+	if err := validateControl(state); err != nil {
+		return State{}, err
 	}
 	return state, nil
 }
@@ -421,6 +443,11 @@ func NewStore(dir, prURL string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(dir, 0700); err != nil {
+			return nil, err
+		}
+	}
 	store := &Store{
 		PR:       pr,
 		Path:     filepath.Join(dir, pr.Key+".json"),
@@ -472,14 +499,24 @@ func (s *Store) Lock(migrate bool) (func() error, error) {
 }
 
 func (s *Store) Save() error {
+	if s.deferSave {
+		return nil
+	}
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(s.Data); err != nil {
+		return err
+	}
+	if _, err := decodeState(buffer.Bytes()); err != nil {
+		return err
+	}
 	f, err := os.CreateTemp(filepath.Dir(s.Path), ".watch-*.tmp")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(f.Name())
-	encoder := json.NewEncoder(f)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(s.Data); err != nil {
+	if _, err := f.Write(buffer.Bytes()); err != nil {
 		f.Close()
 		return err
 	}
@@ -490,7 +527,59 @@ func (s *Store) Save() error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), s.Path)
+	if err := os.Rename(f.Name(), s.Path); err != nil {
+		return err
+	}
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	dir, err := os.Open(filepath.Dir(s.Path))
+	if err != nil {
+		return fmt.Errorf("state commit is uncertain: %w", err)
+	}
+	if err := dir.Sync(); err != nil {
+		dir.Close()
+		return fmt.Errorf("state commit is uncertain: %w", err)
+	}
+	if err := dir.Close(); err != nil {
+		return fmt.Errorf("state commit is uncertain: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) Update(fn func(*Store) error) error {
+	path := strings.TrimSuffix(s.Path, filepath.Ext(s.Path)) + ".state.lock"
+	release, err := flock(path)
+	if err != nil {
+		return err
+	}
+	defer release()
+	state, err := ReadState(s.Path)
+	if err != nil {
+		return err
+	}
+	if state.PRURL != s.PR.URL || state.Control == nil {
+		return errors.New("managed state identity mismatch")
+	}
+	tx := *s
+	tx.Data, tx.deferSave = state, true
+	if err := fn(&tx); err != nil {
+		return err
+	}
+	if err := validateControl(tx.Data); err != nil {
+		return err
+	}
+	tx.deferSave = false
+	if err := tx.Save(); err != nil {
+		return err
+	}
+	s.Data = tx.Data
+	if tx.removeStopMarker && tx.Data.Finished {
+		if err := os.Remove(tx.StopPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) PendingEvent() (json.RawMessage, error) {
@@ -604,6 +693,10 @@ func (s *Store) Ack(eventID string) error {
 	if len(s.Data.Pending) == 0 || isNull(s.Data.Pending) {
 		if s.Data.LastAck != nil && *s.Data.LastAck == eventID {
 			if s.Data.Finished {
+				if s.deferSave {
+					s.removeStopMarker = true
+					return nil
+				}
 				if err := os.Remove(s.StopPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 					return err
 				}
@@ -642,6 +735,10 @@ func (s *Store) Ack(eventID string) error {
 		return err
 	}
 	if s.Data.Finished {
+		if s.deferSave {
+			s.removeStopMarker = true
+			return nil
+		}
 		if err := os.Remove(s.StopPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}

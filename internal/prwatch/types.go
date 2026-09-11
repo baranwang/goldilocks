@@ -44,13 +44,16 @@ type State struct {
 	Error      *string         `json:"error"`
 	Finished   bool            `json:"finished"`
 	Collecting *Batch          `json:"collecting"`
+	Control    *Control        `json:"control,omitempty"`
 }
 
 type Store struct {
-	PR       PR
-	Path     string
-	StopPath string
-	Data     State
+	PR               PR
+	Path             string
+	StopPath         string
+	Data             State
+	deferSave        bool
+	removeStopMarker bool
 }
 
 type Event struct {

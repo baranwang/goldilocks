@@ -38,6 +38,9 @@ func RunCLI(ctx context.Context, args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if store.Data.Control != nil && args[0] != "status" {
+		return errors.New("managed state: use watcher advance/status/stop")
+	}
 	encoder := json.NewEncoder(output)
 	encoder.SetEscapeHTML(false)
 
@@ -85,6 +88,9 @@ func RunCLI(ctx context.Context, args []string, output io.Writer) error {
 		return err
 	}
 	defer release()
+	if store.Data.Control != nil && args[0] != "status" {
+		return errors.New("managed state: use watcher advance/status/stop")
+	}
 
 	switch args[0] {
 	case "watch":

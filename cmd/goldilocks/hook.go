@@ -6,17 +6,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+
+	"github.com/baranwang/goldilocks/internal/prwatch"
 )
 
-type HookEvent struct {
-	Name       string `json:"hook_event_name"`
-	Cwd        string `json:"cwd"`
-	SessionID  string `json:"session_id"`
-	AgentID    string `json:"agent_id"`
-	AgentType  string `json:"agent_type"`
-	StopActive bool   `json:"stop_hook_active"`
-}
+type HookEvent = prwatch.RuntimeEvent
 
 func routingContext(root string) (string, error) {
 	if root == "" {
@@ -42,30 +38,31 @@ func routingContext(root string) (string, error) {
 }
 
 func RunHook(input io.Reader, output io.Writer, root string) error {
-	raw, err := io.ReadAll(io.LimitReader(input, (1<<20)+1))
+	event, err := prwatch.DecodeRuntime(input)
 	if err != nil {
-		return err
-	}
-	if len(raw) > 1<<20 {
-		return errors.New("hook input exceeds 1 MiB")
-	}
-	var event HookEvent
-	if err := json.Unmarshal(raw, &event); err != nil {
 		return err
 	}
 	switch event.Name {
 	case "SessionStart", "SubagentStart":
+		var observationErr error
+		if event.Name == "SubagentStart" {
+			observationErr = observeManagedRuntime(event)
+		}
 		body, err := routingContext(root)
 		if err != nil {
 			return err
 		}
-		return json.NewEncoder(output).Encode(map[string]any{
+		result := map[string]any{
 			"hookSpecificOutput": map[string]string{
 				"hookEventName": event.Name, "additionalContext": body,
 			},
-		})
-	case "SubagentStop":
-		decision, err := CheckStop(event)
+		}
+		if observationErr != nil {
+			result["systemMessage"] = "Goldilocks PR watcher observation failed: " + observationErr.Error()
+		}
+		return json.NewEncoder(output).Encode(result)
+	case "Stop", "SubagentStop":
+		decision, err := managedStopDecision(event)
 		if err != nil {
 			return err
 		}
@@ -73,7 +70,69 @@ func RunHook(input io.Reader, output io.Writer, root string) error {
 			return nil
 		}
 		return json.NewEncoder(output).Encode(decision)
+	case "PostToolUse":
+		if err := observeManagedRuntime(event); err != nil {
+			return json.NewEncoder(output).Encode(map[string]string{
+				"systemMessage": "Goldilocks PR watcher observation failed: " + err.Error(),
+			})
+		}
+		return nil
 	default:
 		return nil
 	}
+}
+
+func managedStopDecision(event HookEvent) (*prwatch.HookDecision, error) {
+	return managedStopDecisionOn(event, runtime.GOOS)
+}
+
+func managedStopDecisionOn(event HookEvent, goos string) (*prwatch.HookDecision, error) {
+	if goos == "windows" {
+		return nil, nil
+	}
+	root, err := prwatch.DefaultControllerRoot()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(root); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	controller, err := prwatch.NewController(root, nil)
+	if err != nil {
+		return nil, err
+	}
+	return controller.StopDecision(event)
+}
+
+func observeManagedRuntime(event HookEvent) error {
+	return observeManagedRuntimeOn(event, runtime.GOOS)
+}
+
+func observeManagedRuntimeOn(event HookEvent, goos string) error {
+	if event.Name == "PostToolUse" && event.ToolName != "mcp__codex_app__send_message_to_thread" {
+		return nil
+	}
+	root, err := prwatch.DefaultControllerRoot()
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(root); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	managed, err := prwatch.RuntimeManaged(root, event)
+	if err != nil || !managed {
+		return err
+	}
+	if goos == "windows" {
+		return prwatch.ErrUnsupportedPlatform
+	}
+	controller, err := prwatch.NewController(root, nil)
+	if err != nil {
+		return err
+	}
+	return controller.ObserveRuntime(event)
 }

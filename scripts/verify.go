@@ -127,6 +127,18 @@ func check() error {
 	return nil
 }
 
+func checkUnrelatedSmoke(event string, output []byte, controllerRoot string) error {
+	if len(bytes.TrimSpace(output)) != 0 {
+		return fmt.Errorf("unrelated %s was affected", event)
+	}
+	if _, err := os.Stat(controllerRoot); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	return fmt.Errorf("unrelated %s mutated isolated controller state", event)
+}
+
 func smoke(t target, version string) error {
 	root, err := os.MkdirTemp("", "goldilocks plugin root ")
 	if err != nil {
@@ -182,7 +194,9 @@ func smoke(t target, version string) error {
 	if err := json.Unmarshal(raw, &config); err != nil {
 		return err
 	}
-	for _, event := range []string{"SessionStart", "SubagentStart", "SubagentStop"} {
+	codexHome := filepath.Join(root, "codex-home")
+	controllerRoot := filepath.Join(codexHome, "goldilocks", "pr-watch")
+	for _, event := range []string{"SessionStart", "SubagentStart", "PostToolUse", "SubagentStop", "Stop"} {
 		groups := config.Hooks[event]
 		if len(groups) != 1 || len(groups[0].Hooks) != 1 {
 			return fmt.Errorf("expected one command handler for %s", event)
@@ -198,18 +212,20 @@ func smoke(t target, version string) error {
 			return fmt.Errorf("missing native command for %s", event)
 		}
 		payload, _ := json.Marshal(map[string]string{"hook_event_name": event, "cwd": cwd,
-			"session_id": "00000000-0000-4000-8000-000000000001", "agent_id": "00000000-0000-4000-8000-000000000002"})
+			"session_id": "00000000-0000-4000-8000-000000000001", "agent_id": "00000000-0000-4000-8000-000000000002",
+			"tool_name": "mcp__codex_app__read_thread"})
 		cmd := exec.Command(launcher[0], launcher[1:]...)
 		cmd.Dir = cwd
-		cmd.Env = append(os.Environ(), "PLUGIN_ROOT="+root, "PLUGIN_DATA="+dataDir)
+		cmd.Env = append(os.Environ(), "PLUGIN_ROOT="+root, "PLUGIN_DATA="+dataDir, "CODEX_HOME="+codexHome)
 		cmd.Stdin = bytes.NewReader(payload)
 		output, err := cmd.Output()
 		if err != nil {
 			return fmt.Errorf("%s smoke: %w", event, err)
 		}
-		if event == "SubagentStop" {
-			if len(bytes.TrimSpace(output)) != 0 {
-				return errors.New("unregistered child was affected")
+		routing := event == "SessionStart" || event == "SubagentStart"
+		if !routing {
+			if err := checkUnrelatedSmoke(event, output, controllerRoot); err != nil {
+				return err
 			}
 		} else {
 			var result struct {
@@ -233,11 +249,11 @@ func smoke(t target, version string) error {
 	}
 	cmd := exec.Command(launcher[0], launcher[1:]...)
 	cmd.Dir = cwd
-	cmd.Env = append(os.Environ(), "PLUGIN_ROOT="+root, "PLUGIN_DATA="+dataDir)
+	cmd.Env = append(os.Environ(), "PLUGIN_ROOT="+root, "PLUGIN_DATA="+dataDir, "CODEX_HOME="+codexHome)
 	output, err = cmd.CombinedOutput()
 	if err == nil || len(bytes.TrimSpace(output)) == 0 {
 		return errors.New("invalid pinned checksum must fail with a diagnostic")
 	}
-	fmt.Printf("native smoke verified %s/%s: version %s, three hook events, invalid-checksum diagnostic\n", t.OS, t.Arch, version)
+	fmt.Printf("native smoke verified %s/%s: version %s, five hook events, invalid-checksum diagnostic\n", t.OS, t.Arch, version)
 	return nil
 }

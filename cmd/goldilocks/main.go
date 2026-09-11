@@ -37,7 +37,7 @@ func RunCLI(ctx context.Context, args []string, input io.Reader, output, diagnos
 			return 0
 		}
 		fmt.Fprintln(diagnostics, "goldilocks:", err)
-		if errors.Is(err, context.Canceled) {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return 130
 		}
 		if errors.Is(err, prwatch.ErrLocked) {
@@ -46,8 +46,16 @@ func RunCLI(ctx context.Context, args []string, input io.Reader, output, diagnos
 		return 2
 	}
 	if args[0] == "watcher" {
-		if err := RunWatcherCLI(args[1:], output); err != nil {
+		runCtx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		if err := RunWatcherCLI(runCtx, args[1:], output); err != nil {
 			fmt.Fprintln(diagnostics, "goldilocks:", err)
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return 130
+			}
+			if errors.Is(err, prwatch.ErrLocked) {
+				return 3
+			}
 			return 2
 		}
 		return 0
