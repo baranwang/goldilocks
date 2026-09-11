@@ -75,15 +75,30 @@ func TestControllerCLIRetiresLegacyActions(t *testing.T) {
 	}
 }
 
-func TestControllerCLIImportIsExplicitlyUnsupportedUntilMigration(t *testing.T) {
+func TestControllerCLIImportsLegacyState(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "legacy.json")
+	raw, err := os.ReadFile(filepath.Join("testdata", "v2-pending.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
 	c, err := NewController(t.TempDir(), func() time.Time { return specTime })
 	if err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	err = c.RunCLI(context.Background(), []string{"import", "--pr", specPR, "--state-file", "/tmp/legacy.json"}, specParent, t.TempDir(), &out)
-	if !errors.Is(err, ErrUnsupportedAction) || out.Len() != 0 {
-		t.Fatalf("import did not expose the migration boundary: %v %q", err, out.String())
+	err = c.RunCLI(context.Background(), []string{"import", "--pr", specPR, "--state-file", source}, specParent, t.TempDir(), &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result StartResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.Spawn || result.TicketFile == "" || result.StateFile == "" {
+		t.Fatalf("unexpected import result: %#v", result)
 	}
 }
 

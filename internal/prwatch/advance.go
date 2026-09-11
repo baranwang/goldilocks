@@ -228,6 +228,36 @@ func (s *Store) ApplyPoll(snapshot Snapshot, readErr error, started, observed ti
 		}
 	} else {
 		out.Cycle.Failures = 0
+		if control := s.Data.Control; control != nil && control.RefreshRequired &&
+			!hasPending(s) && s.Data.Collecting == nil {
+			state, ok := snapshot["state"].(string)
+			if !ok {
+				return out, errors.New("snapshot state must be a string")
+			}
+			if state != "MERGED" && state != "CLOSED" {
+				changes, err := ChangesBetween(nil, snapshot)
+				if err != nil {
+					return out, err
+				}
+				raw, err := s.Stage("initial", snapshot, changes, nil, nil, observed)
+				if err != nil {
+					return out, err
+				}
+				var event Event
+				if err := decodeJSON(raw, &event); err != nil {
+					return out, err
+				}
+				control.InitialEventID = event.EventID
+				control.RefreshRequired = false
+				if !s.deferSave {
+					if err := s.Save(); err != nil {
+						return out, err
+					}
+				}
+				out.Event = raw
+				return out, nil
+			}
+		}
 		kind, err := s.Observe(snapshot, observed)
 		if err != nil {
 			return out, err

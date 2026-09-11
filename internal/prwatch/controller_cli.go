@@ -13,6 +13,8 @@ import (
 
 const legacyWatcherMessage = "Legacy watcher registration commands are retired. Use watcher start/status; stop the old execution before watcher import --pr URL --state-file PATH."
 
+// ErrUnsupportedAction is retained for source compatibility with callers that
+// compiled against the pre-migration CLI; import is implemented now.
 var ErrUnsupportedAction = errors.New("watcher import is unsupported until migration support is implemented")
 
 type controllerCLIOptions struct {
@@ -133,7 +135,14 @@ func (c *Controller) RunCLI(ctx context.Context, args []string, runtimeID, cwd s
 			Action string `json:"action"`
 		}{Type: "yielded", Action: "yielded"})
 	case "import":
-		return ErrUnsupportedAction
+		if !filepath.IsAbs(cwd) {
+			return errors.New("watcher cwd must be absolute")
+		}
+		result, err := c.Import(runtimeID, cwd, options.pr, options.stateFile)
+		if err != nil {
+			return err
+		}
+		return encode(result)
 	default:
 		return errors.New("unknown watcher action")
 	}

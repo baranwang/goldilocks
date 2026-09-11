@@ -172,6 +172,119 @@ func (c *Controller) Start(parentID, cwd, prURL string, opts StartOptions) (Star
 	return startResult(store, ticketFile, true), nil
 }
 
+// Import copies a legacy v2/v3 state into a new managed generation. The
+// source worker lock is acquired before the destination lock so an old
+// watcher cannot change the bytes while they are being copied.
+func (c *Controller) Import(parentID, cwd, prURL, sourceFile string) (StartResult, error) {
+	if !validUUID(parentID) {
+		return StartResult{}, errors.New("parent_id must be a UUID")
+	}
+	if !filepath.IsAbs(cwd) {
+		return StartResult{}, errors.New("cwd must be absolute")
+	}
+	pr, err := ParsePR(prURL)
+	if err != nil {
+		return StartResult{}, err
+	}
+	if !filepath.IsAbs(sourceFile) {
+		return StartResult{}, errors.New("source state path must be absolute")
+	}
+	sourceFile = filepath.Clean(sourceFile)
+	info, err := os.Lstat(sourceFile)
+	if err != nil {
+		return StartResult{}, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return StartResult{}, errors.New("source state must be a regular file")
+	}
+	sourceLock := strings.TrimSuffix(sourceFile, filepath.Ext(sourceFile)) + ".lock"
+	releaseSource, err := flock(sourceLock)
+	if err != nil {
+		return StartResult{}, err
+	}
+	defer releaseSource()
+
+	raw, err := os.ReadFile(sourceFile)
+	if err != nil {
+		return StartResult{}, err
+	}
+	legacy, err := decodeState(raw)
+	if err != nil {
+		return StartResult{}, err
+	}
+	if legacy.Version != 2 && legacy.Version != 3 {
+		return StartResult{}, errors.New("import source must use legacy state version 2 or 3")
+	}
+	if legacy.PRURL != pr.URL {
+		return StartResult{}, errors.New("source state PR does not match requested PR")
+	}
+	if legacy.Finished {
+		return StartResult{}, errors.New("legacy state is finished; use start --reopened after verifying that the PR has reopened")
+	}
+
+	store, err := c.Open(parentID, pr.URL)
+	if err != nil {
+		return StartResult{}, err
+	}
+	if err := c.rejectSymlinkedFile(store.Path); err != nil {
+		return StartResult{}, err
+	}
+	if info, err := os.Lstat(store.Path); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return StartResult{}, errors.New("managed destination state is not a regular file")
+		}
+		return StartResult{}, errors.New("managed watch already exists; use resume or start --reopened")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return StartResult{}, err
+	}
+	releaseDestination, err := flock(stateLockPath(store.Path))
+	if err != nil {
+		return StartResult{}, err
+	}
+	defer releaseDestination()
+	if info, err := os.Lstat(store.Path); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return StartResult{}, errors.New("managed destination state is not a regular file")
+		}
+		return StartResult{}, errors.New("managed watch already exists; use resume or start --reopened")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return StartResult{}, err
+	}
+
+	watchID, err := newUUID()
+	if err != nil {
+		return StartResult{}, err
+	}
+	ticket, err := newTicket(watchID, parentID, pr.URL)
+	if err != nil {
+		return StartResult{}, err
+	}
+	ticketFile := ticketPath(store.Path)
+	if err := c.rejectSymlinkedFile(ticketFile); err != nil {
+		return StartResult{}, err
+	}
+	if err := writeJSON0600(ticketFile, ticket); err != nil {
+		return StartResult{}, err
+	}
+	control := newControl(parentID, watchID, cwd, digest(ticket.Nonce), c.Now().UTC(), Options{defaultInterval, defaultQuiet})
+	control.RefreshRequired = true
+	control.ImportPath = sourceFile
+	control.ImportSHA256 = digest(string(raw))
+	store.Data = State{
+		Version: 4, PRURL: pr.URL,
+		Snapshot: legacy.Snapshot,
+		Pending:  append(json.RawMessage(nil), legacy.Pending...),
+		LastAck:  cloneString(legacy.LastAck), Error: cloneString(legacy.Error),
+		Finished: false, Collecting: legacy.Collecting, Control: control,
+	}
+	if err := store.Save(); err != nil {
+		// Keep the ticket as an orphan; Start can safely replace it after a
+		// failed destination commit while the legacy source remains untouched.
+		return StartResult{}, err
+	}
+	return startResult(store, ticketFile, true), nil
+}
+
 func (c *Controller) ObserveStart(parentID, agentID, turnID string) error {
 	if !validUUID(parentID) || !validUUID(agentID) || !validUUID(turnID) {
 		return errors.New("membership identities must be UUIDs")
@@ -291,6 +404,9 @@ func (c *Controller) resumeIntent(store *Store, ticketFile, parentID string, opt
 	if control == nil || control.ParentID != parentID {
 		return StartResult{}, errors.New("existing state is not a managed watch")
 	}
+	if opts.Reopened && !finishedGeneration(store.Data) {
+		return StartResult{}, errors.New("reopened start requires a finished, fully cleaned previous generation")
+	}
 	if opts.Reopened && finishedGeneration(store.Data) {
 		releaseWorker, err := store.Lock(false)
 		if err != nil {
@@ -400,17 +516,22 @@ func (c *Controller) startReopenedGeneration(store *Store, ticketFile, parentID 
 	if err != nil {
 		return StartResult{}, err
 	}
-	if err := os.WriteFile(archiveState, oldState, 0600); err != nil {
+	archiveStateCreated, err := ensureArchiveFile(archiveState, oldState)
+	if err != nil {
 		return StartResult{}, err
 	}
+	archiveTicketCreated := false
 	cleanupArchive := func() {
-		_ = os.Remove(archiveState)
-		if ticketErr == nil {
+		if archiveStateCreated {
+			_ = os.Remove(archiveState)
+		}
+		if archiveTicketCreated {
 			_ = os.Remove(archiveTicket)
 		}
 	}
 	if ticketErr == nil {
-		if err := os.WriteFile(archiveTicket, oldTicket, 0600); err != nil {
+		archiveTicketCreated, err = ensureArchiveFile(archiveTicket, oldTicket)
+		if err != nil {
 			cleanupArchive()
 			return StartResult{}, err
 		}
@@ -793,6 +914,10 @@ func writeJSON0600(path string, value any) error {
 	if err := encoder.Encode(value); err != nil {
 		return err
 	}
+	return writeFile0600(path, buffer.Bytes())
+}
+
+func writeFile0600(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	f, err := os.CreateTemp(dir, ".controller-*.tmp")
 	if err != nil {
@@ -804,7 +929,7 @@ func writeJSON0600(path string, value any) error {
 		f.Close()
 		return err
 	}
-	if _, err := f.Write(buffer.Bytes()); err != nil {
+	if _, err := f.Write(data); err != nil {
 		f.Close()
 		return err
 	}
@@ -827,4 +952,28 @@ func writeJSON0600(path string, value any) error {
 		return fmt.Errorf("file commit is uncertain: %w", err)
 	}
 	return directory.Close()
+}
+
+func ensureArchiveFile(path string, data []byte) (bool, error) {
+	info, err := os.Lstat(path)
+	if err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return false, errors.New("archive target is not a regular file")
+		}
+		current, err := os.ReadFile(path)
+		if err != nil {
+			return false, err
+		}
+		if !bytes.Equal(current, data) {
+			return false, errors.New("archive already contains conflicting bytes")
+		}
+		return false, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	if err := writeFile0600(path, data); err != nil {
+		return false, err
+	}
+	return true, nil
 }

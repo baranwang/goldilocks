@@ -4,10 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
 const deliveryRetryDelay = 5 * time.Second
+
+var errDeliveryNotFound = errors.New("delivery event was not found")
 
 type ObservedSend struct {
 	AgentID    string
@@ -252,7 +256,7 @@ func (c *Controller) Receive(parentID, prURL, eventID string, part int) (string,
 			var ok bool
 			delivery, ok = control.History[eventID]
 			if !ok {
-				return errors.New("delivery event was not found")
+				return errDeliveryNotFound
 			}
 		}
 		if part > len(delivery.Parts) {
@@ -277,5 +281,85 @@ func (c *Controller) Receive(parentID, prURL, eventID string, part int) (string,
 		}
 		return nil
 	})
+	if errors.Is(err, errDeliveryNotFound) {
+		return c.receiveArchived(s.PR, parentID, eventID, part)
+	}
 	return result, err
+}
+
+func (c *Controller) receiveArchived(pr PR, parentID, eventID string, part int) (string, error) {
+	historyDir := filepath.Join(c.parentDir(parentID), "history")
+	if err := c.validateManagedDir(historyDir); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	entries, err := os.ReadDir(historyDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", errDeliveryNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	type candidate struct {
+		path     string
+		delivery Delivery
+	}
+	var found []candidate
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		path := filepath.Join(historyDir, entry.Name())
+		if err := c.rejectSymlinkedFile(path); err != nil {
+			return "", err
+		}
+		state, err := ReadState(path)
+		if err != nil {
+			return "", err
+		}
+		if state.PRURL != pr.URL || state.Control == nil || state.Control.ParentID != parentID {
+			continue
+		}
+		if delivery, ok := state.Control.History[eventID]; ok {
+			found = append(found, candidate{path: path, delivery: delivery})
+		}
+	}
+	if len(found) == 0 {
+		return "", errDeliveryNotFound
+	}
+	if len(found) != 1 {
+		return "", errors.New("delivery event is ambiguous")
+	}
+	if part > len(found[0].delivery.Parts) {
+		return "", errors.New("delivery part is out of range")
+	}
+	archived := &Store{PR: pr, Path: found[0].path, StopPath: filepath.Join(filepath.Dir(found[0].path), entryStem(found[0].path)+".stop")}
+	result := ""
+	err = managedUpdate(archived, func(tx *Store) error {
+		delivery, ok := tx.Data.Control.History[eventID]
+		if !ok {
+			return errDeliveryNotFound
+		}
+		if part > len(delivery.Parts) {
+			return errors.New("delivery part is out of range")
+		}
+		if delivery.Parts[part-1].Received {
+			result = "duplicate"
+			return nil
+		}
+		delivery.Parts[part-1].Received = true
+		result = "event_complete"
+		for _, current := range delivery.Parts {
+			if !current.Received {
+				result = "new_part"
+				break
+			}
+		}
+		tx.Data.Control.History[eventID] = delivery
+		return nil
+	})
+	return result, err
+}
+
+func entryStem(path string) string {
+	return strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 }

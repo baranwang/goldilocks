@@ -63,6 +63,9 @@ func TestV2PendingAndManifestSurviveUpgrade(t *testing.T) {
 	s = mustStore(t, dir)
 	release, err := s.Lock(false)
 	check(t, err)
+	if s.Data.Version != 2 {
+		t.Fatalf("status-style lock migrated legacy state: version=%d", s.Data.Version)
+	}
 	check(t, release())
 	before, err := os.ReadFile(s.Path)
 	check(t, err)

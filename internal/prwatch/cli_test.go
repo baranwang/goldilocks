@@ -163,6 +163,27 @@ func TestBuiltWatcherControllerStartAndStatus(t *testing.T) {
 	}
 }
 
+func TestStandaloneCLIRejectsManagedMutations(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("managed POSIX CLI")
+	}
+	root := t.TempDir()
+	controller, err := pw.NewController(root, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := "00000000-0000-4000-8000-000000000041"
+	start, err := controller.Start(parent, t.TempDir(), testPR, pw.StartOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	err = pw.RunCLI(context.Background(), []string{"prepare", "--pr", testPR, "--state-dir", filepath.Dir(start.StateFile)}, &output)
+	if err == nil || !strings.Contains(err.Error(), "managed state") || output.Len() != 0 {
+		t.Fatalf("standalone mutation was not rejected: err=%v output=%q", err, output.String())
+	}
+}
+
 func TestBuiltWatcherControllerConcurrentStartAndReceiptLifecycle(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("managed POSIX CLI")
