@@ -34,6 +34,22 @@ func TestControllerHooksHavePortableLaunchers(t *testing.T) {
 	}
 }
 
+func TestUnrelatedSmokeRejectsControllerState(t *testing.T) {
+	controllerRoot := filepath.Join(t.TempDir(), "goldilocks", "pr-watch")
+	if err := checkUnrelatedSmoke("PostToolUse", nil, controllerRoot); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(controllerRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkUnrelatedSmoke("PostToolUse", nil, controllerRoot); err == nil {
+		t.Fatal("created controller state was accepted")
+	}
+	if err := checkUnrelatedSmoke("PostToolUse", []byte("{}\n"), filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("unexpected output was accepted")
+	}
+}
+
 func TestReleaseChecksumGate(t *testing.T) {
 	t.Chdir(t.TempDir())
 	if err := os.Mkdir("scripts", 0755); err != nil {

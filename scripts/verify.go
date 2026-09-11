@@ -127,6 +127,18 @@ func check() error {
 	return nil
 }
 
+func checkUnrelatedSmoke(event string, output []byte, controllerRoot string) error {
+	if len(bytes.TrimSpace(output)) != 0 {
+		return fmt.Errorf("unrelated %s was affected", event)
+	}
+	if _, err := os.Stat(controllerRoot); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	return fmt.Errorf("unrelated %s mutated isolated controller state", event)
+}
+
 func smoke(t target, version string) error {
 	root, err := os.MkdirTemp("", "goldilocks plugin root ")
 	if err != nil {
@@ -182,6 +194,8 @@ func smoke(t target, version string) error {
 	if err := json.Unmarshal(raw, &config); err != nil {
 		return err
 	}
+	codexHome := filepath.Join(root, "codex-home")
+	controllerRoot := filepath.Join(codexHome, "goldilocks", "pr-watch")
 	for _, event := range []string{"SessionStart", "SubagentStart", "PostToolUse", "SubagentStop", "Stop"} {
 		groups := config.Hooks[event]
 		if len(groups) != 1 || len(groups[0].Hooks) != 1 {
@@ -202,7 +216,7 @@ func smoke(t target, version string) error {
 			"tool_name": "mcp__codex_app__read_thread"})
 		cmd := exec.Command(launcher[0], launcher[1:]...)
 		cmd.Dir = cwd
-		cmd.Env = append(os.Environ(), "PLUGIN_ROOT="+root, "PLUGIN_DATA="+dataDir, "CODEX_HOME="+filepath.Join(root, "codex-home"))
+		cmd.Env = append(os.Environ(), "PLUGIN_ROOT="+root, "PLUGIN_DATA="+dataDir, "CODEX_HOME="+codexHome)
 		cmd.Stdin = bytes.NewReader(payload)
 		output, err := cmd.Output()
 		if err != nil {
@@ -210,8 +224,8 @@ func smoke(t target, version string) error {
 		}
 		routing := event == "SessionStart" || event == "SubagentStart"
 		if !routing {
-			if len(bytes.TrimSpace(output)) != 0 {
-				return fmt.Errorf("unrelated %s was affected", event)
+			if err := checkUnrelatedSmoke(event, output, controllerRoot); err != nil {
+				return err
 			}
 		} else {
 			var result struct {
@@ -235,7 +249,7 @@ func smoke(t target, version string) error {
 	}
 	cmd := exec.Command(launcher[0], launcher[1:]...)
 	cmd.Dir = cwd
-	cmd.Env = append(os.Environ(), "PLUGIN_ROOT="+root, "PLUGIN_DATA="+dataDir, "CODEX_HOME="+filepath.Join(root, "codex-home"))
+	cmd.Env = append(os.Environ(), "PLUGIN_ROOT="+root, "PLUGIN_DATA="+dataDir, "CODEX_HOME="+codexHome)
 	output, err = cmd.CombinedOutput()
 	if err == nil || len(bytes.TrimSpace(output)) == 0 {
 		return errors.New("invalid pinned checksum must fail with a diagnostic")
