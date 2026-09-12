@@ -337,6 +337,9 @@ func formatCodeComment(comment map[string]any, outdated bool) (string, bool, err
 func commentSortKey(comment map[string]any) string {
 	path, _ := comment["path"].(string)
 	line, _ := evidenceNumber(comment["line"])
+	if number, err := parseEvidenceLine(line); err == nil {
+		line = fmt.Sprintf("%020d", number)
+	}
 	author, _ := comment["author"].(string)
 	body, _ := comment["body"].(string)
 	return path + "\x00" + line + "\x00" + author + "\x00" + body
