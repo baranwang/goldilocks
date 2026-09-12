@@ -237,6 +237,20 @@ func TestReceiveDeduplicatesParentPartsWithoutTransportReceipt(t *testing.T) {
 	}
 }
 
+func TestReceiveAloneLeavesTransportReceiptUnset(t *testing.T) {
+	c, _, s, first := deliveryFixture(t)
+	if _, err := c.Receive(specParent, specPR, first.EventID, first.Part); err != nil {
+		t.Fatal(err)
+	}
+	state, err := ReadState(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt := state.Control.Outbox.Parts[first.Part-1].Receipt; receipt != nil {
+		t.Fatalf("reception fabricated transport receipt: %+v", receipt)
+	}
+}
+
 func TestCommitAcceptedRollsBackWithOuterTransaction(t *testing.T) {
 	c, _, s, a := deliveryFixture(t)
 	if err := c.AcceptSend(ObservedSend{specChild, specParent, "call-1", a.Prompt, true, specTime}); err != nil {

@@ -162,6 +162,56 @@ func TestNotificationDescribesLegacyErrorRecoveryAndTerminalStates(t *testing.T)
 	}
 }
 
+func TestNotificationRendersLineAddressableReviewCommentAsCodeComment(t *testing.T) {
+	event := pw.Event{Type: "update", Changes: pw.Changes{
+		"threads": map[string]any{
+			"thread": map[string]any{"comments": []any{map[string]any{
+				"path": "internal/auth.go", "line": 42, "author": "alice",
+				"body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Validate authorization**\nFix auth \"quote\"\nSecond line",
+			}}},
+		}},
+	}
+	body, err := pw.NotificationBody(event)
+	check(t, err)
+	directives := []string{}
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "::code-comment{") {
+			directives = append(directives, line)
+		}
+	}
+	if len(directives) != 1 {
+		t.Fatalf("expected one standalone directive line, got %d:\n%s", len(directives), body)
+	}
+	directive := directives[0]
+	want := `::code-comment{title="Validate authorization" body="**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Validate authorization**\nFix auth \"quote\"\nSecond line" file="internal/auth.go" start=42 end=42 priority=1}`
+	if directive != want {
+		t.Fatalf("directive mismatch:\n got: %s\nwant: %s", directive, want)
+	}
+	if strings.Contains(body, "> Fix auth") || strings.Contains(body, "\n> Second line") {
+		t.Fatalf("targeted comment was rendered as blockquote:\n%s", body)
+	}
+}
+
+func TestNotificationFallsBackToMarkdownForUntargetableReviewComment(t *testing.T) {
+	for _, comment := range []map[string]any{
+		{"author": "alice", "body": "needs review\nwith detail"},
+		{"author": "alice", "path": "internal/auth.go", "line": "not-a-line", "body": "needs review\nwith detail"},
+		{"author": "alice", "path": "internal/auth.go", "line": 0, "body": "needs review\nwith detail"},
+		{"author": "alice", "path": "internal/auth.go", "line": -1, "body": "needs review\nwith detail"},
+	} {
+		body, err := pw.NotificationBody(pw.Event{Type: "update", Changes: pw.Changes{"threads": map[string]any{
+			"thread": map[string]any{"comments": []any{comment}},
+		}}})
+		check(t, err)
+		if !strings.Contains(body, "**Review comment — @alice**") || !strings.Contains(body, "> needs review\n> with detail") {
+			t.Fatalf("markdown fallback missing:\n%s", body)
+		}
+		if strings.Contains(body, "::code-comment") {
+			t.Fatalf("untargetable comment emitted directive:\n%s", body)
+		}
+	}
+}
+
 func TestNotificationRendersEachTerminalObservationOnceWithEvidence(t *testing.T) {
 	for _, tc := range []struct {
 		kind, summary string

@@ -38,6 +38,18 @@ func TestAppReceiptDecodesObservedDesktopShape(t *testing.T) {
 	}
 }
 
+func TestDecodeSendAcceptsSuccessfulDelegationReceipt(t *testing.T) {
+	e := RuntimeEvent{
+		Name: "PostToolUse", AgentID: specChild, ToolName: appSendTool, ToolUseID: "receipt-boundary-1",
+		ToolInput:    json.RawMessage(`{"threadId":"` + specParent + `","prompt":"exact delivery prompt"}`),
+		ToolResponse: json.RawMessage(`{"tool_name":"mcp__codex_app__send_message_to_thread","isError":false,"content":[{"type":"text","text":"{\"threadId\":\"` + specParent + `\",\"message\":\"Delegated to destination thread ` + specParent + `\"}"}]}`),
+	}
+	send, recognized, err := DecodeSend(e, specTime)
+	if err != nil || !recognized || !send.Accepted || send.ParentID != specParent || send.Prompt != "exact delivery prompt" {
+		t.Fatalf("successful delegation receipt rejected: %+v recognized=%v err=%v", send, recognized, err)
+	}
+}
+
 func TestAppReceiptRequiresExactUnambiguousResult(t *testing.T) {
 	tests := []struct {
 		name     string
