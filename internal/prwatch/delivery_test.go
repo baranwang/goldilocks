@@ -3,6 +3,7 @@ package prwatch
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -248,6 +249,85 @@ func TestReceiveAloneLeavesTransportReceiptUnset(t *testing.T) {
 	}
 	if receipt := state.Control.Outbox.Parts[first.Part-1].Receipt; receipt != nil {
 		t.Fatalf("reception fabricated transport receipt: %+v", receipt)
+	}
+}
+
+func TestReceiptAndParentReceiveRemainValidInEitherOrder(t *testing.T) {
+	for _, receiptFirst := range []bool{true, false} {
+		name := "parent_received_first"
+		if receiptFirst {
+			name = "post_tool_receipt_first"
+		}
+		t.Run(name, func(t *testing.T) {
+			c, _, s, first := deliveryFixture(t)
+			receipt := func() error {
+				return c.AcceptSend(ObservedSend{specChild, specParent, "ordered-call", first.Prompt, true, specTime})
+			}
+			parent := func() error {
+				_, err := c.Receive(specParent, specPR, first.EventID, first.Part)
+				return err
+			}
+			if receiptFirst {
+				if err := receipt(); err != nil {
+					t.Fatal(err)
+				}
+				if err := parent(); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := parent(); err != nil {
+					t.Fatal(err)
+				}
+				if err := receipt(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := s.Update(func(tx *Store) error { return tx.CommitAccepted() }); err != nil {
+				t.Fatal(err)
+			}
+			state, err := ReadState(s.Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			part := state.Control.History[first.EventID].Parts[first.Part-1]
+			if !part.Received || part.Receipt == nil || part.Receipt.CallID != "ordered-call" {
+				t.Fatalf("delivery evidence lost: %+v", part)
+			}
+		})
+	}
+}
+
+func TestStatusFailsClosedWhenParentReceivedWithoutPostToolReceipt(t *testing.T) {
+	c, _, s, first := deliveryFixture(t)
+	if _, err := c.Receive(specParent, specPR, first.EventID, first.Part); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Update(func(tx *Store) error {
+		part := &tx.Data.Control.Outbox.Parts[first.Part-1]
+		part.Offers = 3
+		tx.Data.Control.Worker = Execution{ID: specWatch, Ended: true}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	status, err := c.Status(specParent, specPR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if fields["ready"] != false || fields["activity"] != "delivery_pending" ||
+		fields["parent_received"] != true || fields["post_tool_receipt"] != false ||
+		fields["hook_not_observed"] != true || fields["failure_code"] != "delivery_receipt_missing" ||
+		!strings.Contains(status.FailureDetail, "PostToolUse was not observed") || status.Worker.Locked || status.Worker.Fresh {
+		t.Fatalf("missing receipt was not diagnosed: %s", raw)
 	}
 }
 

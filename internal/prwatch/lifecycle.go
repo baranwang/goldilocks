@@ -22,6 +22,9 @@ type Status struct {
 	Stage            Stage        `json:"stage"`
 	Ready            bool         `json:"ready"`
 	Activity         string       `json:"activity"`
+	ParentReceived   bool         `json:"parent_received"`
+	PostToolReceipt  bool         `json:"post_tool_receipt"`
+	HookNotObserved  bool         `json:"hook_not_observed"`
 	Worker           WorkerStatus `json:"worker"`
 	AgentID          string       `json:"agent_id"`
 	PendingEventID   string       `json:"pending_event_id"`
@@ -278,6 +281,15 @@ func (c *Controller) Status(parentID, prURL string) (Status, error) {
 			if control.Worker.ID != "" && !control.Worker.Ended {
 				control.Worker.Ended = true
 			}
+			if control.Worker.Ended && control.Outbox != nil {
+				for i := range control.Outbox.Parts {
+					part := &control.Outbox.Parts[i]
+					if part.Received && part.Receipt == nil && part.Offers >= 3 {
+						failMissingReceipt(control, control.Outbox, i)
+						break
+					}
+				}
+			}
 			if control.Stage == NeedsAttention {
 				control.FaultSeen = true
 			}
@@ -300,6 +312,7 @@ func (c *Controller) Status(parentID, prURL string) (Status, error) {
 	}
 	store.Data = state
 	control := state.Control
+	parentReceived, postToolReceipt := deliveryEvidence(control.Outbox)
 	worker.ExecutionID = control.Worker.ID
 	if worker.Locked && !control.Worker.HeartbeatAt.IsZero() {
 		worker.Fresh = !c.Now().After(control.Worker.HeartbeatAt.Add(90 * time.Second))
@@ -317,11 +330,25 @@ func (c *Controller) Status(parentID, prURL string) (Status, error) {
 	}
 	return Status{
 		WatchID: control.WatchID, Stage: control.Stage, Ready: control.Ready,
-		Activity: activity, Worker: worker, AgentID: control.AgentID,
+		Activity: activity, ParentReceived: parentReceived, PostToolReceipt: postToolReceipt,
+		HookNotObserved: control.FailureCode == "delivery_receipt_missing" && parentReceived && !postToolReceipt,
+		Worker:          worker, AgentID: control.AgentID,
 		PendingEventID: pendingEventID(state), FailureCode: control.FailureCode,
 		FailureDetail:    control.FailureDetail,
 		CleanupConfirmed: !worker.Locked && (control.Worker.ID == "" || control.Worker.Ended),
 	}, nil
+}
+
+func deliveryEvidence(delivery *Delivery) (parentReceived, postToolReceipt bool) {
+	if delivery == nil || len(delivery.Parts) == 0 {
+		return false, false
+	}
+	parentReceived, postToolReceipt = true, true
+	for _, part := range delivery.Parts {
+		parentReceived = parentReceived && part.Received
+		postToolReceipt = postToolReceipt && part.Receipt != nil
+	}
+	return parentReceived, postToolReceipt
 }
 
 func (c *Controller) Stop(parentID, prURL string) error {

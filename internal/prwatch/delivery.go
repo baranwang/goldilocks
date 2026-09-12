@@ -70,9 +70,7 @@ func (s *Store) Offer(now time.Time) (Action, error) {
 			}
 		}
 		if part.Offers >= 3 {
-			control.Stage = NeedsAttention
-			control.FailureCode = "delivery_receipt_missing"
-			control.FailureDetail = fmt.Sprintf("event %s part %d has no accepted send receipt", outbox.EventID, i+1)
+			failMissingReceipt(control, outbox, i)
 			return deliveryAction(control, outbox, i, "attention", 0), nil
 		}
 		part.Offers++
@@ -80,6 +78,13 @@ func (s *Store) Offer(now time.Time) (Action, error) {
 		return deliveryAction(control, outbox, i, "send", 0), nil
 	}
 	return deliveryAction(control, outbox, len(outbox.Parts)-1, "wait", 1), nil
+}
+
+func failMissingReceipt(control *Control, delivery *Delivery, index int) {
+	control.Stage = NeedsAttention
+	control.Ready = false
+	control.FailureCode = "delivery_receipt_missing"
+	control.FailureDetail = fmt.Sprintf("PostToolUse was not observed with an accepted receipt for event %s part %d", delivery.EventID, index+1)
 }
 
 func deliveryAction(control *Control, delivery *Delivery, index int, action string, retry int) Action {

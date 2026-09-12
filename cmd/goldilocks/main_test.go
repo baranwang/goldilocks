@@ -169,6 +169,32 @@ func TestManagedObservationFailureIsFailOpen(t *testing.T) {
 	}
 }
 
+func TestMalformedPostToolUseEmitsDiagnostic(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("managed POSIX controller")
+	}
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, "goldilocks", "pr-watch"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	event := HookEvent{
+		Name: "PostToolUse", AgentID: runtimeChild,
+		ToolName: "mcp__codex_app__send_message_to_thread", ToolInput: json.RawMessage(`[]`),
+	}
+	raw, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := RunHook(bytes.NewReader(raw), &out, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "PostToolUse") || !strings.Contains(out.String(), "observation failed") {
+		t.Fatalf("malformed managed tool event was silent: %q", out.String())
+	}
+}
+
 func TestWindowsManagedDiagnosticRequiresMatchingIntent(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fixture requires managed POSIX state")
@@ -279,6 +305,24 @@ func TestHookManifestComposesManagedRuntimeHooksWithExistingLaunchers(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := validateManagedHookManifest(raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, mutate := range []func([]byte) []byte{
+		func(raw []byte) []byte {
+			return bytes.Replace(raw, []byte(`mcp__codex_app__send_message_to_thread`), []byte(`mcp__codex_app__read_thread`), 1)
+		},
+		func(raw []byte) []byte {
+			return bytes.Replace(raw, []byte(`\"${PLUGIN_ROOT}/scripts/goldilocks.sh\" hook`), []byte(`go run ./cmd/goldilocks hook`), -1)
+		},
+	} {
+		if err := validateManagedHookManifest(mutate(raw)); err == nil {
+			t.Fatal("invalid hook manifest was accepted")
+		}
+	}
+}
+
+func validateManagedHookManifest(raw []byte) error {
 	var manifest struct {
 		Hooks map[string][]struct {
 			Matcher string `json:"matcher"`
@@ -289,21 +333,25 @@ func TestHookManifestComposesManagedRuntimeHooksWithExistingLaunchers(t *testing
 		}
 	}
 	if err := json.Unmarshal(raw, &manifest); err != nil {
-		t.Fatal(err)
+		return err
 	}
 	post := manifest.Hooks["PostToolUse"]
 	start := manifest.Hooks["SubagentStart"]
 	stop := manifest.Hooks["Stop"]
 	childStop := manifest.Hooks["SubagentStop"]
+	const command = `"${PLUGIN_ROOT}/scripts/goldilocks.sh" hook`
+	const commandWindows = `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$env:PLUGIN_ROOT/scripts/goldilocks.ps1" hook; exit $LASTEXITCODE`
 	if len(post) != 1 || len(post[0].Hooks) != 1 || post[0].Matcher != "mcp__codex_app__send_message_to_thread" ||
-		len(start) != 1 || len(start[0].Hooks) != 1 || post[0].Hooks[0].Command != start[0].Hooks[0].Command ||
+		len(start) != 1 || len(start[0].Hooks) != 1 || post[0].Hooks[0].Command != command ||
+		post[0].Hooks[0].CommandWindows != commandWindows || post[0].Hooks[0].Command != start[0].Hooks[0].Command ||
 		post[0].Hooks[0].CommandWindows != start[0].Hooks[0].CommandWindows || post[0].Hooks[0].Timeout != 150 ||
 		post[0].Hooks[0].StatusMessage != "Recording PR watcher delivery" || len(stop) != 1 || len(stop[0].Hooks) != 1 ||
 		len(childStop) != 1 || len(childStop[0].Hooks) != 1 || stop[0].Hooks[0].Command != childStop[0].Hooks[0].Command ||
 		stop[0].Hooks[0].CommandWindows != childStop[0].Hooks[0].CommandWindows || stop[0].Hooks[0].Timeout != childStop[0].Hooks[0].Timeout ||
 		stop[0].Hooks[0].StatusMessage != "Checking PR watcher startup" {
-		t.Fatalf("unexpected managed runtime hooks: post=%+v stop=%+v", post, stop)
+		return fmt.Errorf("unexpected managed runtime hooks: post=%+v stop=%+v", post, stop)
 	}
+	return nil
 }
 
 func TestVersionDoesNotNeedTools(t *testing.T) {
