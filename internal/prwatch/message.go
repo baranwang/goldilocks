@@ -342,7 +342,8 @@ func commentSortKey(comment map[string]any) string {
 	}
 	author, _ := comment["author"].(string)
 	body, _ := comment["body"].(string)
-	return path + "\x00" + line + "\x00" + author + "\x00" + body
+	id := fmt.Sprint(comment["id"])
+	return path + "\x00" + line + "\x00" + author + "\x00" + body + "\x00" + id
 }
 
 func targetedMetadata(comment map[string]any) string {

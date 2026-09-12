@@ -272,6 +272,31 @@ func TestNotificationSortsTargetedCommentsDeterministically(t *testing.T) {
 	}
 }
 
+func TestNotificationSortTieBreaksIndependentOfInputOrder(t *testing.T) {
+	makeEvent := func(comments []any) pw.Event {
+		return pw.Event{Type: "update", Changes: pw.Changes{"threads": map[string]any{"t": map[string]any{"comments": comments}}}}
+	}
+	low := map[string]any{"id": "low", "path": "x.go", "line": 2, "author": "a", "body": "**Same**"}
+	high := map[string]any{"id": "high", "path": "x.go", "line": 10, "author": "a", "body": "**Same**"}
+	one, err := pw.NotificationBody(makeEvent([]any{high, low}))
+	check(t, err)
+	two, err := pw.NotificationBody(makeEvent([]any{low, high}))
+	check(t, err)
+	if one != two || strings.Index(one, "start=2") > strings.Index(one, "start=10") {
+		t.Fatalf("line ordering depends on input: one=%s two=%s", one, two)
+	}
+
+	first := map[string]any{"id": "a", "path": "x.go", "line": 2, "author": "a", "state": "APPROVED", "body": "**Same**"}
+	second := map[string]any{"id": "b", "path": "x.go", "line": 2, "author": "a", "state": "CHANGES_REQUESTED", "body": "**Same**"}
+	one, err = pw.NotificationBody(makeEvent([]any{second, first}))
+	check(t, err)
+	two, err = pw.NotificationBody(makeEvent([]any{first, second}))
+	check(t, err)
+	if one != two || strings.Index(one, "approved") > strings.Index(one, "changes requested") {
+		t.Fatalf("same-location ordering depends on input: one=%s two=%s", one, two)
+	}
+}
+
 func TestNotificationRendersEachTerminalObservationOnceWithEvidence(t *testing.T) {
 	for _, tc := range []struct {
 		kind, summary string

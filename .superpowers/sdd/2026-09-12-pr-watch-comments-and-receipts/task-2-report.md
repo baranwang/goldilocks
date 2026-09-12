@@ -44,3 +44,19 @@ ok   github.com/baranwang/goldilocks/cmd/goldilocks  0.395s
 ok   github.com/baranwang/goldilocks/internal/prwatch  14.097s
 ok   github.com/baranwang/goldilocks/scripts  2.725s
 ```
+
+## Review follow-up 2
+
+Added regression coverage for numeric line ordering (2 before 10) across reversed input permutations and for same path/line/author/body comments distinguished by stable IDs. The deterministic sort key now includes the comment ID as its final tie-breaker.
+
+Fresh verification:
+
+```text
+go test ./internal/prwatch -count=1
+ok   github.com/baranwang/goldilocks/internal/prwatch  13.930s
+
+go test ./... -count=1
+ok   github.com/baranwang/goldilocks/cmd/goldilocks  0.475s
+ok   github.com/baranwang/goldilocks/internal/prwatch  12.507s
+ok   github.com/baranwang/goldilocks/scripts  2.509s
+```
