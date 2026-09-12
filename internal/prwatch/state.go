@@ -299,7 +299,7 @@ func validateSnapshot(snapshot Snapshot) error {
 }
 
 func validateEvidence(value map[string]any) error {
-	for _, field := range []string{"body", "url", "author", "path", "state", "commit_id", "submitted_at"} {
+	for _, field := range []string{"body", "url", "author", "path", "state", "commit_id", "submitted_at", "diffSide"} {
 		if err := optionalString(value, field); err != nil {
 			return fmt.Errorf("%s: %w", field, err)
 		}

@@ -85,13 +85,13 @@ func TestCollectorPaginatesRESTThreadsAndRepliesAtObservedHead(t *testing.T) {
 		switch want.name {
 		case "threads-1":
 			if !strings.Contains(joined, "reviewThreads(first:100, after:$cursor)") ||
-				!strings.Contains(joined, "id body url path line originalLine author { login }") ||
+				!strings.Contains(joined, "id body url path line originalLine diffSide author { login }") ||
 				strings.Count(joined, "pageInfo { hasNextPage endCursor }") != 2 || strings.Contains(joined, "cursor=") {
 				t.Fatalf("bad first thread request: %q", args)
 			}
 		case "replies-2":
 			if !containsArgs(args, "threadId=T1", "cursor=next-comment") ||
-				!strings.Contains(joined, "id body url path line originalLine author { login }") ||
+				!strings.Contains(joined, "id body url path line originalLine diffSide author { login }") ||
 				strings.Count(joined, "pageInfo { hasNextPage endCursor }") != 1 {
 				t.Fatalf("bad reply cursor: %q", args)
 			}
@@ -122,8 +122,13 @@ func TestCollectorPaginatesRESTThreadsAndRepliesAtObservedHead(t *testing.T) {
 		t.Fatalf("thread pages or resolved filtering wrong: %#v", threads)
 	}
 	t1 := threads["T1"].(map[string]any)["comments"].([]any)
-	if len(t1) != 2 || t1[1].(map[string]any)["body"] != "nested page" {
+	if len(t1) != 2 || t1[0].(map[string]any)["diffSide"] != "RIGHT" ||
+		t1[1].(map[string]any)["diffSide"] != "LEFT" || t1[1].(map[string]any)["body"] != "nested page" {
 		t.Fatalf("reply pagination wrong: %#v", t1)
+	}
+	t2 := threads["T2"].(map[string]any)["comments"].([]any)
+	if len(t2) != 1 || t2[0].(map[string]any)["diffSide"] != "RIGHT" {
+		t.Fatalf("outer thread pagination lost diff side: %#v", t2)
 	}
 	if len(checks) != 3 {
 		t.Fatalf("CI pages not flattened: %#v", checks)

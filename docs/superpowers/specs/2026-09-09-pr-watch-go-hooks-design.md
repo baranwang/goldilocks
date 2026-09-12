@@ -206,7 +206,7 @@ error 通知独立冻结，不消费 collecting。error 的 pending.snapshot 仍
 
 formatter 对 observations 按序生成可读 Markdown，包含原始评论/review 正文、作者、链接、可用的位置/outdated/reviewed commit、变化的 CI 和必要日志摘录。终态摘要后仍需呈现本批 evidence，不能提前 return 丢掉正文。外部日志不可读取时如实说明，不能无限拖延通知。
 
-正文仍按最多 6000 个 Unicode code point 确定性切分，Go 使用 []rune 而非字节切片；保存完整 manifest 后按序读取。Unicode、换行、引号、反斜杠与代码正文必须能从分段完整恢复。页脚继续提供 Watch / Event / Part。重试不重新摘要、不重新分段；以前 prepare 的 JSON 通知原样送完，之后的新事件使用 Markdown。Thread 不再属于 unresolved 集合只描述为“不再未解决”。可定位到文件与有效行号的 review finding 使用 Codex `::code-comment` 指令；无法可靠定位的评论和状态证据使用 Markdown。该指令仅用于 Codex UI 渲染，不是 GitHub API review submission，也不伪造原生 PR 评论卡片。
+正文仍按最多 6000 个 Unicode code point 确定性切分，Go 使用 rune 计数而非字节计数；`::code-comment` 物理行是唯一的软上限例外，若单行超过 6000 rune，必须独占一个超限分段并保持完整，消息头和页脚不得插入该行。保存完整 manifest 后按序读取，Unicode、换行、引号、反斜杠与代码正文必须能从分段完整恢复。页脚继续提供 Watch / Event / Part。重试不重新摘要、不重新分段；以前 prepare 的 JSON 通知原样送完，之后的新事件使用 Markdown。Thread 不再属于 unresolved 集合只描述为“不再未解决”。只有最终快照中仍未解决、与最终 head 一致且 GraphQL `diffSide=RIGHT` 的有效文件行 review finding 使用 Codex `::code-comment` 指令；历史、已移动、已解决、已移除、`LEFT` 或 side 未确认的评论和状态证据使用 Markdown。该指令仅用于 Codex UI 渲染，不是 GitHub API review submission，也不伪造原生 PR 评论卡片。
 
 发送不确定与失败最多重试三次，使用相同 event_id、part 和 prompt。仍失败时保留 pending，通过 child 的正常结果报告投递失败，不能写“已经通知”或“后台仍在监控”。
 

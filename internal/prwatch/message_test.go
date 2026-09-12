@@ -77,6 +77,138 @@ func TestMessagePartsPreserveUnicodeAndRestart(t *testing.T) {
 	}
 }
 
+func TestPrepareKeepsOversizedCodeCommentOnOnePhysicalLine(t *testing.T) {
+	dir := t.TempDir()
+	s := mustStore(t, dir)
+	release, err := s.Lock(true)
+	check(t, err)
+	defer func() { check(t, release()) }()
+	body := strings.Repeat("evidence", 800)
+	comment := map[string]any{
+		"id": "oversized", "path": "internal/auth.go", "line": json.Number("42"),
+		"author": "reviewer", "body": body, "diffSide": "RIGHT",
+	}
+	snapshot := emptySnapshot()
+	snapshot["threads"] = map[string]any{"thread": map[string]any{
+		"outdated": false, "comments": []any{comment},
+	}}
+	delta := pw.Changes{"threads": map[string]any{"thread": map[string]any{
+		"outdated": false, "comments": []any{comment},
+	}}}
+	_, err = s.Stage("update", snapshot, delta, nil, []pw.Observation{{
+		Type: "update", ObservedAt: "2026-09-09T00:00:00Z", HeadSHA: "abc123", Changes: delta,
+	}}, time.Unix(0, 0))
+	check(t, err)
+	count, err := s.Prepare("")
+	check(t, err)
+	if count < 2 {
+		t.Fatal("oversized directive did not get its own message part")
+	}
+
+	directives := []string{}
+	for part := 1; part <= count; part++ {
+		message, err := s.Message(part)
+		check(t, err)
+		for _, line := range strings.Split(message.Prompt, "\n") {
+			if strings.HasPrefix(line, "::code-comment{") {
+				directives = append(directives, line)
+			}
+		}
+	}
+	if len(directives) != 1 || !strings.HasSuffix(directives[0], "}") ||
+		!strings.Contains(directives[0], `body="`+body+`"`) ||
+		strings.Contains(directives[0], "Watch:") {
+		t.Fatalf("directive was split or evidence was lost: parts=%d directives=%d", count, len(directives))
+	}
+}
+
+func TestPrepareRendersOnlyCommentsCurrentInFinalBatchSnapshot(t *testing.T) {
+	comment := func(line string) map[string]any {
+		return map[string]any{
+			"id": "comment", "path": "internal/auth.go", "line": json.Number(line),
+			"author": "reviewer", "body": "finding", "diffSide": "RIGHT",
+		}
+	}
+	threadChange := func(reply map[string]any) pw.Changes {
+		return pw.Changes{"threads": map[string]any{"thread": map[string]any{
+			"outdated": false, "comments": []any{reply},
+		}}}
+	}
+	for _, tc := range []struct {
+		name             string
+		finalHead        string
+		finalThreads     map[string]any
+		observations     []pw.Observation
+		wantDirectives   int
+		wantCurrentStart string
+	}{
+		{
+			name: "head advanced", finalHead: "new-head",
+			finalThreads: map[string]any{"thread": map[string]any{"outdated": false, "comments": []any{comment("5")}}},
+			observations: []pw.Observation{
+				{Type: "update", ObservedAt: "2026-09-09T00:00:00Z", HeadSHA: "old-head", Changes: threadChange(comment("5"))},
+				{Type: "update", ObservedAt: "2026-09-09T00:01:00Z", HeadSHA: "new-head", Changes: pw.Changes{"head_sha": map[string]any{"before": "old-head", "after": "new-head"}}},
+			},
+		},
+		{
+			name: "comment moved", finalHead: "abc123",
+			finalThreads: map[string]any{"thread": map[string]any{"outdated": false, "comments": []any{comment("9")}}},
+			observations: []pw.Observation{
+				{Type: "update", ObservedAt: "2026-09-09T00:00:00Z", HeadSHA: "abc123", Changes: threadChange(comment("5"))},
+				{Type: "update", ObservedAt: "2026-09-09T00:01:00Z", HeadSHA: "abc123", Changes: threadChange(comment("9"))},
+			},
+			wantDirectives: 1, wantCurrentStart: "start=9 end=9",
+		},
+		{
+			name: "thread resolved or removed", finalHead: "abc123", finalThreads: map[string]any{},
+			observations: []pw.Observation{
+				{Type: "update", ObservedAt: "2026-09-09T00:00:00Z", HeadSHA: "abc123", Changes: threadChange(comment("5"))},
+				{Type: "update", ObservedAt: "2026-09-09T00:01:00Z", HeadSHA: "abc123", Changes: pw.Changes{"threads_removed": []any{"thread"}}},
+			},
+		},
+		{
+			name: "comment removed", finalHead: "abc123",
+			finalThreads: map[string]any{"thread": map[string]any{"outdated": false, "comments": []any{}}},
+			observations: []pw.Observation{
+				{Type: "update", ObservedAt: "2026-09-09T00:00:00Z", HeadSHA: "abc123", Changes: threadChange(comment("5"))},
+				{Type: "update", ObservedAt: "2026-09-09T00:01:00Z", HeadSHA: "abc123", Changes: pw.Changes{
+					"removed_evidence": map[string]any{"head_sha": "abc123", "thread_comments": map[string]any{"thread": []any{comment("5")}}},
+				}},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := mustStore(t, t.TempDir())
+			release, err := s.Lock(true)
+			check(t, err)
+			defer func() { check(t, release()) }()
+			snapshot := emptySnapshot()
+			snapshot["head_sha"] = tc.finalHead
+			snapshot["threads"] = tc.finalThreads
+			_, err = s.Stage("update", snapshot, tc.observations[len(tc.observations)-1].Changes, nil, tc.observations, time.Unix(0, 0))
+			check(t, err)
+			count, err := s.Prepare("")
+			check(t, err)
+			var output strings.Builder
+			for part := 1; part <= count; part++ {
+				message, err := s.Message(part)
+				check(t, err)
+				output.WriteString(message.Prompt)
+			}
+			body := output.String()
+			if got := strings.Count(body, "::code-comment{"); got != tc.wantDirectives {
+				t.Fatalf("got %d current directives, want %d:\n%s", got, tc.wantDirectives, body)
+			}
+			if !strings.Contains(body, "> finding") {
+				t.Fatalf("superseded evidence was not retained as Markdown:\n%s", body)
+			}
+			if tc.wantCurrentStart != "" && !strings.Contains(body, tc.wantCurrentStart) {
+				t.Fatalf("current location missing %q:\n%s", tc.wantCurrentStart, body)
+			}
+		})
+	}
+}
+
 func TestNotificationKeepsObservationAndRemovalEvidence(t *testing.T) {
 	removed := map[string]any{
 		"head_sha": "old-head",
@@ -167,7 +299,8 @@ func TestNotificationRendersLineAddressableReviewCommentAsCodeComment(t *testing
 		"threads": map[string]any{
 			"thread": map[string]any{"comments": []any{map[string]any{
 				"path": "internal/auth.go", "line": 42, "author": "alice",
-				"body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Validate authorization**\nFix auth \"quote\"\nSecond line",
+				"diffSide": "RIGHT",
+				"body":     "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Validate authorization**\nFix auth \"quote\"\nSecond line",
 			}}},
 		}},
 	}
@@ -189,6 +322,38 @@ func TestNotificationRendersLineAddressableReviewCommentAsCodeComment(t *testing
 	}
 	if strings.Contains(body, "> Fix auth") || strings.Contains(body, "\n> Second line") {
 		t.Fatalf("targeted comment was rendered as blockquote:\n%s", body)
+	}
+}
+
+func TestNotificationRequiresRightDiffSideForCodeComment(t *testing.T) {
+	for _, tc := range []struct {
+		name, side string
+		want       bool
+	}{
+		{"right", "RIGHT", true},
+		{"left", "LEFT", false},
+		{"unknown", "UNKNOWN", false},
+		{"missing", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			comment := map[string]any{
+				"id": "comment", "path": "x.go", "line": 7,
+				"author": "alice", "body": "finding",
+			}
+			if tc.side != "" {
+				comment["diffSide"] = tc.side
+			}
+			body, err := pw.NotificationBody(pw.Event{Type: "update", Changes: pw.Changes{"threads": map[string]any{
+				"thread": map[string]any{"comments": []any{comment}},
+			}}})
+			check(t, err)
+			if got := strings.Contains(body, "::code-comment{"); got != tc.want {
+				t.Fatalf("diff side %q directive=%v, want %v:\n%s", tc.side, got, tc.want, body)
+			}
+			if !tc.want && !strings.Contains(body, "> finding") {
+				t.Fatalf("non-right evidence was not retained as Markdown:\n%s", body)
+			}
+		})
 	}
 }
 
@@ -227,7 +392,7 @@ func TestNotificationCodeCommentEscapesAndPrioritizes(t *testing.T) {
 			if tc.badge != "" {
 				body = "**<sub><sub>![" + tc.badge + " Badge](https://img.shields.io/badge/" + tc.badge + "-orange)</sub></sub>  Heading**\n" + body
 			}
-			comment := map[string]any{"path": "x.go", "line": 7, "originalLine": 99, "author": "a", "body": body}
+			comment := map[string]any{"path": "x.go", "line": 7, "originalLine": 99, "author": "a", "body": body, "diffSide": "RIGHT"}
 			out, err := pw.NotificationBody(pw.Event{Type: "update", Changes: pw.Changes{"threads": map[string]any{"t": map[string]any{"comments": []any{comment}}}}})
 			check(t, err)
 			if !strings.Contains(out, `file="x.go" start=7 end=7`+tc.priority+`}`) {
@@ -250,7 +415,7 @@ func TestNotificationOutdatedOriginalLineFallsBackToMarkdown(t *testing.T) {
 }
 
 func TestNotificationTargetedCommentPreservesMetadata(t *testing.T) {
-	comment := map[string]any{"path": "x.go", "line": 3, "author": "a", "state": "CHANGES_REQUESTED", "commit_id": "abc123", "url": testPR, "body": "**Heading**\nbody"}
+	comment := map[string]any{"path": "x.go", "line": 3, "author": "a", "state": "CHANGES_REQUESTED", "commit_id": "abc123", "url": testPR, "body": "**Heading**\nbody", "diffSide": "RIGHT"}
 	out, err := pw.NotificationBody(pw.Event{Type: "update", Changes: pw.Changes{"threads": map[string]any{"t": map[string]any{"comments": []any{comment}}}}})
 	check(t, err)
 	for _, want := range []string{"changes requested", "Reviewed commit: `abc123`", "[View on GitHub](<" + testPR + ">)"} {
@@ -262,8 +427,8 @@ func TestNotificationTargetedCommentPreservesMetadata(t *testing.T) {
 
 func TestNotificationSortsTargetedCommentsDeterministically(t *testing.T) {
 	comments := []any{
-		map[string]any{"path": "z.go", "line": 2, "author": "z", "body": "**Z**"},
-		map[string]any{"path": "a.go", "line": 9, "author": "a", "body": "**A**"},
+		map[string]any{"path": "z.go", "line": 2, "author": "z", "body": "**Z**", "diffSide": "RIGHT"},
+		map[string]any{"path": "a.go", "line": 9, "author": "a", "body": "**A**", "diffSide": "RIGHT"},
 	}
 	out, err := pw.NotificationBody(pw.Event{Type: "update", Changes: pw.Changes{"threads": map[string]any{"t": map[string]any{"comments": comments}}}})
 	check(t, err)
@@ -276,8 +441,8 @@ func TestNotificationSortTieBreaksIndependentOfInputOrder(t *testing.T) {
 	makeEvent := func(comments []any) pw.Event {
 		return pw.Event{Type: "update", Changes: pw.Changes{"threads": map[string]any{"t": map[string]any{"comments": comments}}}}
 	}
-	low := map[string]any{"id": "low", "path": "x.go", "line": 2, "author": "a", "body": "**Same**"}
-	high := map[string]any{"id": "high", "path": "x.go", "line": 10, "author": "a", "body": "**Same**"}
+	low := map[string]any{"id": "low", "path": "x.go", "line": 2, "author": "a", "body": "**Same**", "diffSide": "RIGHT"}
+	high := map[string]any{"id": "high", "path": "x.go", "line": 10, "author": "a", "body": "**Same**", "diffSide": "RIGHT"}
 	one, err := pw.NotificationBody(makeEvent([]any{high, low}))
 	check(t, err)
 	two, err := pw.NotificationBody(makeEvent([]any{low, high}))
@@ -286,8 +451,8 @@ func TestNotificationSortTieBreaksIndependentOfInputOrder(t *testing.T) {
 		t.Fatalf("line ordering depends on input: one=%s two=%s", one, two)
 	}
 
-	first := map[string]any{"id": "a", "path": "x.go", "line": 2, "author": "a", "state": "APPROVED", "body": "**Same**"}
-	second := map[string]any{"id": "b", "path": "x.go", "line": 2, "author": "a", "state": "CHANGES_REQUESTED", "body": "**Same**"}
+	first := map[string]any{"id": "a", "path": "x.go", "line": 2, "author": "a", "state": "APPROVED", "body": "**Same**", "diffSide": "RIGHT"}
+	second := map[string]any{"id": "b", "path": "x.go", "line": 2, "author": "a", "state": "CHANGES_REQUESTED", "body": "**Same**", "diffSide": "RIGHT"}
 	one, err = pw.NotificationBody(makeEvent([]any{second, first}))
 	check(t, err)
 	two, err = pw.NotificationBody(makeEvent([]any{first, second}))
