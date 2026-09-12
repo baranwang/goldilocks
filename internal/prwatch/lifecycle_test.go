@@ -864,6 +864,51 @@ func TestRecoveryCommandsQuoteResolvedLauncherAndTicket(t *testing.T) {
 	}
 }
 
+func TestRecoveryInstructionsUsePublicWatcherCLI(t *testing.T) {
+	t.Run("child", func(t *testing.T) {
+		c, _, store := boundFixture(t)
+		launcher := installTestLauncher(t)
+		if err := store.Update(func(tx *Store) error {
+			tx.Data.Control.Worker = Execution{ID: "00000000-0000-4000-8000-000000000004"}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		decision, err := c.StopDecision(RuntimeEvent{Name: "SubagentStop", SessionID: specParent, AgentID: specChild})
+		if err != nil || decision == nil {
+			t.Fatal(decision, err)
+		}
+		if !strings.Contains(decision.Reason, shellQuote(launcher)+" "+shellQuote("watcher")+
+			" "+shellQuote("yield")+" "+shellQuote("--ticket-file")) ||
+			strings.Contains(decision.Reason, shellQuote("controller")) ||
+			strings.Contains(decision.Reason, shellQuote("--ticket")) {
+			t.Fatalf("child recovery instruction used a non-public CLI: %s", decision.Reason)
+		}
+	})
+
+	t.Run("parent", func(t *testing.T) {
+		c, _, store := boundFixture(t)
+		launcher := installTestLauncher(t)
+		if err := store.Update(func(tx *Store) error {
+			tx.Data.Control.Stage = NeedsAttention
+			tx.Data.Control.FaultSeen = false
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		decision, err := c.StopDecision(RuntimeEvent{Name: "Stop", SessionID: specParent})
+		if err != nil || decision == nil {
+			t.Fatal(decision, err)
+		}
+		if !strings.Contains(decision.Reason, shellQuote(launcher)+" "+shellQuote("watcher")+
+			" "+shellQuote("status")+" "+shellQuote("--pr")) ||
+			strings.Contains(decision.Reason, shellQuote("controller")) ||
+			strings.Contains(decision.Reason, shellQuote("--parent-id")) {
+			t.Fatalf("parent recovery instruction used a non-public CLI: %s", decision.Reason)
+		}
+	})
+}
+
 func TestChildRecoveryInstructionUsesSavedWorkerFacts(t *testing.T) {
 	t.Run("saved handle", func(t *testing.T) {
 		c, _, store := boundFixture(t)
