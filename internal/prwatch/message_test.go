@@ -249,6 +249,29 @@ func TestNotificationOutdatedOriginalLineFallsBackToMarkdown(t *testing.T) {
 	}
 }
 
+func TestNotificationTargetedCommentPreservesMetadata(t *testing.T) {
+	comment := map[string]any{"path": "x.go", "line": 3, "author": "a", "state": "CHANGES_REQUESTED", "commit_id": "abc123", "url": testPR, "body": "**Heading**\nbody"}
+	out, err := pw.NotificationBody(pw.Event{Type: "update", Changes: pw.Changes{"threads": map[string]any{"t": map[string]any{"comments": []any{comment}}}}})
+	check(t, err)
+	for _, want := range []string{"changes requested", "Reviewed commit: `abc123`", "[View on GitHub](<" + testPR + ">)"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("targeted metadata missing %q: %s", want, out)
+		}
+	}
+}
+
+func TestNotificationSortsTargetedCommentsDeterministically(t *testing.T) {
+	comments := []any{
+		map[string]any{"path": "z.go", "line": 2, "author": "z", "body": "**Z**"},
+		map[string]any{"path": "a.go", "line": 9, "author": "a", "body": "**A**"},
+	}
+	out, err := pw.NotificationBody(pw.Event{Type: "update", Changes: pw.Changes{"threads": map[string]any{"t": map[string]any{"comments": comments}}}})
+	check(t, err)
+	if strings.Index(out, `title="A"`) > strings.Index(out, `title="Z"`) {
+		t.Fatalf("directives not sorted: %s", out)
+	}
+}
+
 func TestNotificationRendersEachTerminalObservationOnceWithEvidence(t *testing.T) {
 	for _, tc := range []struct {
 		kind, summary string

@@ -158,7 +158,13 @@ func observationBody(kind string, changes Changes, includeTerminalSummary bool) 
 			return "", err
 		}
 		outdated, _ := thread["outdated"].(bool)
-		for _, raw := range comments {
+		orderedComments := append([]any(nil), comments...)
+		sort.SliceStable(orderedComments, func(i, j int) bool {
+			left, _ := orderedComments[i].(map[string]any)
+			right, _ := orderedComments[j].(map[string]any)
+			return commentSortKey(left) < commentSortKey(right)
+		})
+		for _, raw := range orderedComments {
 			comment, err := object(raw, "review comment")
 			if err != nil {
 				return "", err
@@ -169,6 +175,8 @@ func observationBody(kind string, changes Changes, includeTerminalSummary bool) 
 			}
 			if !rendered {
 				text, err = formatFeedback(comment, "Review comment", outdated)
+			} else {
+				text = text + targetedMetadata(comment)
 			}
 			if err != nil {
 				return "", err
@@ -324,6 +332,34 @@ func formatCodeComment(comment map[string]any, outdated bool) (string, bool, err
 		attrs = append(attrs, "priority="+match[1])
 	}
 	return "::code-comment{" + strings.Join(attrs, " ") + "}", true, nil
+}
+
+func commentSortKey(comment map[string]any) string {
+	path, _ := comment["path"].(string)
+	line, _ := evidenceNumber(comment["line"])
+	author, _ := comment["author"].(string)
+	body, _ := comment["body"].(string)
+	return path + "\x00" + line + "\x00" + author + "\x00" + body
+}
+
+func targetedMetadata(comment map[string]any) string {
+	lines := []string{}
+	author, _ := comment["author"].(string)
+	if author == "" {
+		author = "unknown"
+	}
+	heading := "**Review comment — @" + author + "**"
+	if state, _ := comment["state"].(string); state != "" {
+		heading += " · " + strings.ReplaceAll(strings.ToLower(state), "_", " ")
+	}
+	lines = append(lines, heading)
+	if commit, _ := comment["commit_id"].(string); commit != "" {
+		lines = append(lines, "Reviewed commit: `"+commit+"`")
+	}
+	if url, _ := comment["url"].(string); url != "" {
+		lines = append(lines, "[View on GitHub](<"+url+">)")
+	}
+	return "\n\n" + strings.Join(lines, "\n")
 }
 
 func stringJSON(value string) string {

@@ -28,3 +28,19 @@ ok   github.com/baranwang/goldilocks/scripts  2.618s
 ## Concerns
 
 The formatter intentionally targets only current review-thread comments; historical/removed evidence stays Markdown so `withObservedHead` and evidence context remain intact. Badge priority detection follows the existing `![P1 Badge]`/`![P2 Badge]`/`![P3 Badge]` markup convention.
+
+## Review follow-up
+
+Targeted directives now retain the original state heading, reviewed commit, and GitHub link as adjacent Markdown evidence. Comments within each thread are copied and sorted by path, line, author, and body before rendering, ensuring stable directive order without mutating source data.
+
+Additional verification:
+
+```text
+go test ./internal/prwatch -count=1
+ok   github.com/baranwang/goldilocks/internal/prwatch  14.162s
+
+go test ./... -count=1
+ok   github.com/baranwang/goldilocks/cmd/goldilocks  0.395s
+ok   github.com/baranwang/goldilocks/internal/prwatch  14.097s
+ok   github.com/baranwang/goldilocks/scripts  2.725s
+```
