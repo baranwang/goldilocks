@@ -82,7 +82,6 @@ func (s *Store) Offer(now time.Time) (Action, error) {
 
 func failMissingReceipt(control *Control, delivery *Delivery, index int) {
 	control.Stage = NeedsAttention
-	control.Ready = false
 	control.FailureCode = "delivery_receipt_missing"
 	control.FailureDetail = fmt.Sprintf("PostToolUse was not observed with an accepted receipt for event %s part %d", delivery.EventID, index+1)
 }

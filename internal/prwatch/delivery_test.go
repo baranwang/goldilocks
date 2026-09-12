@@ -331,6 +331,60 @@ func TestStatusFailsClosedWhenParentReceivedWithoutPostToolReceipt(t *testing.T)
 	}
 }
 
+func readyMultipartMissingReceiptFixture(t *testing.T) (*Controller, *Store) {
+	t.Helper()
+	c, _, s, first := multipartDeliveryFixture(t)
+	if err := s.Update(func(tx *Store) error {
+		const initialEvent = "accepted-initial-event"
+		hash := strings.Repeat("a", 64)
+		tx.Data.Control.InitialAccepted = true
+		tx.Data.Control.InitialEventID = initialEvent
+		tx.Data.Control.History[initialEvent] = Delivery{
+			EventID: initialEvent, Kind: "initial", Parts: []DeliveryPart{{
+				SHA256: hash,
+				Receipt: &Receipt{
+					CallID: "initial-call", AgentID: specChild, ParentID: specParent,
+					EventID: initialEvent, Part: 1, SHA256: hash, AcceptedAt: specTime,
+				},
+			}},
+		}
+		tx.Data.Control.Ready = true
+		tx.Data.Control.Stage = Running
+		part := &tx.Data.Control.Outbox.Parts[first.Part-1]
+		part.Offers = 3
+		part.Received = true
+		tx.Data.Control.Worker = Execution{ID: specWatch, Ended: true}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return c, s
+}
+
+func TestMissingLaterReceiptPreservesHistoricalReadiness(t *testing.T) {
+	c, _ := readyMultipartMissingReceiptFixture(t)
+	status, err := c.Status(specParent, specPR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Ready || status.Stage != NeedsAttention || status.Activity != "delivery_pending" ||
+		status.FailureCode != "delivery_receipt_missing" {
+		t.Fatalf("later delivery failure erased startup readiness: %+v", status)
+	}
+}
+
+func TestMultipartStatusReportsEvidenceForMissingReceiptPart(t *testing.T) {
+	c, _ := readyMultipartMissingReceiptFixture(t)
+	status, err := c.Status(specParent, specPR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.ParentReceived || status.PostToolReceipt || !status.HookNotObserved ||
+		status.FailureCode != "delivery_receipt_missing" || !strings.Contains(status.FailureDetail, "PostToolUse was not observed") {
+		t.Fatalf("later unoffered parts hid missing receipt evidence: %+v", status)
+	}
+}
+
 func TestCommitAcceptedRollsBackWithOuterTransaction(t *testing.T) {
 	c, _, s, a := deliveryFixture(t)
 	if err := c.AcceptSend(ObservedSend{specChild, specParent, "call-1", a.Prompt, true, specTime}); err != nil {

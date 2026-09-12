@@ -343,12 +343,14 @@ func deliveryEvidence(delivery *Delivery) (parentReceived, postToolReceipt bool)
 	if delivery == nil || len(delivery.Parts) == 0 {
 		return false, false
 	}
-	parentReceived, postToolReceipt = true, true
+	parentReceived = true
 	for _, part := range delivery.Parts {
+		if part.Receipt == nil {
+			return part.Received, false
+		}
 		parentReceived = parentReceived && part.Received
-		postToolReceipt = postToolReceipt && part.Receipt != nil
 	}
-	return parentReceived, postToolReceipt
+	return parentReceived, true
 }
 
 func (c *Controller) Stop(parentID, prURL string) error {
