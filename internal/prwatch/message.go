@@ -1,10 +1,12 @@
 package prwatch
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -14,6 +16,10 @@ type Message struct {
 }
 
 func NotificationBody(event Event) (string, error) {
+	return notificationBody(event, nil)
+}
+
+func notificationBody(event Event, snapshot Snapshot) (string, error) {
 	if len(event.Observations) == 0 {
 		if event.Type == "error" {
 			if event.Error == nil {
@@ -21,7 +27,7 @@ func NotificationBody(event Event) (string, error) {
 			}
 			return "GitHub reads failed; monitoring will retry.\n\n" + quoteEvidence(*event.Error), nil
 		}
-		return ObservationBody(event.Type, event.Changes)
+		return observationBody(event.Type, event.Changes, true, nil)
 	}
 
 	sections := []string{}
@@ -29,8 +35,13 @@ func NotificationBody(event Event) (string, error) {
 	if eventSummary != "" {
 		sections = append(sections, eventSummary)
 	}
-	for _, observation := range event.Observations {
-		body, err := observationBody(observation.Type, observation.Changes, eventSummary == "")
+	current := currentBatchComments(event.Observations, snapshot)
+	for index, observation := range event.Observations {
+		var allowed map[string]bool
+		if current != nil {
+			allowed = current[index]
+		}
+		body, err := observationBody(observation.Type, observation.Changes, eventSummary == "", allowed)
 		if err != nil {
 			return "", err
 		}
@@ -41,10 +52,10 @@ func NotificationBody(event Event) (string, error) {
 }
 
 func ObservationBody(kind string, changes Changes) (string, error) {
-	return observationBody(kind, changes, true)
+	return observationBody(kind, changes, true, nil)
 }
 
-func observationBody(kind string, changes Changes, includeTerminalSummary bool) (string, error) {
+func observationBody(kind string, changes Changes, includeTerminalSummary bool, currentComments map[string]bool) (string, error) {
 	summary := terminalSummary(kind)
 	if summary != "" && includeTerminalSummary {
 		return summary, nil
@@ -156,12 +167,31 @@ func observationBody(kind string, changes Changes, includeTerminalSummary bool) 
 			return "", err
 		}
 		outdated, _ := thread["outdated"].(bool)
-		for _, raw := range comments {
+		orderedComments := append([]any(nil), comments...)
+		sort.SliceStable(orderedComments, func(i, j int) bool {
+			left, _ := orderedComments[i].(map[string]any)
+			right, _ := orderedComments[j].(map[string]any)
+			return commentSortKey(left) < commentSortKey(right)
+		})
+		for _, raw := range orderedComments {
 			comment, err := object(raw, "review comment")
 			if err != nil {
 				return "", err
 			}
-			text, err := formatFeedback(comment, "Review comment", outdated)
+			current := currentComments == nil
+			if currentComments != nil {
+				id, idErr := evidenceID(comment)
+				current = idErr == nil && currentComments[id]
+			}
+			text, rendered, err := formatCodeComment(comment, outdated || !current)
+			if err != nil {
+				return "", err
+			}
+			if !rendered {
+				text, err = formatFeedback(comment, "Review comment", outdated)
+			} else {
+				text = text + targetedMetadata(comment)
+			}
 			if err != nil {
 				return "", err
 			}
@@ -237,6 +267,51 @@ func observationBody(kind string, changes Changes, includeTerminalSummary bool) 
 	return strings.Join(sections, "\n\n"), nil
 }
 
+func currentBatchComments(observations []Observation, snapshot Snapshot) []map[string]bool {
+	if snapshot == nil {
+		return nil
+	}
+	finalHead, _ := snapshot["head_sha"].(string)
+	final := map[string]map[string]any{}
+	threads, _ := snapshot["threads"].(map[string]any)
+	for threadID, rawThread := range threads {
+		thread, _ := rawThread.(map[string]any)
+		if outdated, _ := thread["outdated"].(bool); outdated {
+			continue
+		}
+		comments, _ := thread["comments"].([]any)
+		for _, rawComment := range comments {
+			comment, _ := rawComment.(map[string]any)
+			if id, err := evidenceID(comment); err == nil {
+				final[threadID+"\x00"+id] = comment
+			}
+		}
+	}
+	allowed := make([]map[string]bool, len(observations))
+	selected := map[string]bool{}
+	for index := len(observations) - 1; index >= 0; index-- {
+		allowed[index] = map[string]bool{}
+		if observations[index].HeadSHA != finalHead {
+			continue
+		}
+		threads, _ := observations[index].Changes["threads"].(map[string]any)
+		for threadID, rawThread := range threads {
+			thread, _ := rawThread.(map[string]any)
+			comments, _ := thread["comments"].([]any)
+			for _, rawComment := range comments {
+				comment, _ := rawComment.(map[string]any)
+				id, err := evidenceID(comment)
+				key := threadID + "\x00" + id
+				if err == nil && !selected[key] && reflect.DeepEqual(comment, final[key]) {
+					allowed[index][id] = true
+					selected[key] = true
+				}
+			}
+		}
+	}
+	return allowed
+}
+
 func terminalSummary(kind string) string {
 	switch kind {
 	case "merged", "closed":
@@ -282,6 +357,92 @@ func formatFeedback(comment map[string]any, kind string, outdated bool) (string,
 		lines = append(lines, "\n"+quoteEvidence(body))
 	}
 	return strings.Join(lines, "\n"), nil
+}
+
+var reviewBadge = regexp.MustCompile(`!\[P([123]) Badge\]\([^)]*\)`)
+
+func formatCodeComment(comment map[string]any, outdated bool) (string, bool, error) {
+	path, _ := comment["path"].(string)
+	line, ok := evidenceNumber(comment["line"])
+	side, _ := comment["diffSide"].(string)
+	if path == "" || !ok || outdated || side != "RIGHT" {
+		return "", false, nil
+	}
+	lineNumber, err := parseEvidenceLine(line)
+	if err != nil || lineNumber < 1 {
+		return "", false, nil
+	}
+	author, _ := comment["author"].(string)
+	if author == "" {
+		author = "unknown"
+	}
+	body, _ := comment["body"].(string)
+	title := "Review comment — @" + author
+	for _, candidate := range strings.Split(body, "\n") {
+		if strings.HasPrefix(candidate, "**") && strings.HasSuffix(candidate, "**") {
+			title = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(candidate, "**"), "**"))
+			if end := strings.LastIndex(title, "</sub></sub>"); end >= 0 {
+				title = strings.TrimSpace(title[end+len("</sub></sub>"):])
+			}
+			break
+		}
+	}
+	attrs := []string{"title=" + stringJSON(title), "body=" + stringJSON(body), "file=" + stringJSON(path), fmt.Sprintf("start=%d end=%d", lineNumber, lineNumber)}
+	if match := reviewBadge.FindStringSubmatch(body); len(match) == 2 {
+		attrs = append(attrs, "priority="+match[1])
+	}
+	return "::code-comment{" + strings.Join(attrs, " ") + "}", true, nil
+}
+
+func commentSortKey(comment map[string]any) string {
+	path, _ := comment["path"].(string)
+	line, _ := evidenceNumber(comment["line"])
+	if number, err := parseEvidenceLine(line); err == nil {
+		line = fmt.Sprintf("%020d", number)
+	}
+	author, _ := comment["author"].(string)
+	body, _ := comment["body"].(string)
+	id := fmt.Sprint(comment["id"])
+	return path + "\x00" + line + "\x00" + author + "\x00" + body + "\x00" + id
+}
+
+func targetedMetadata(comment map[string]any) string {
+	lines := []string{}
+	author, _ := comment["author"].(string)
+	if author == "" {
+		author = "unknown"
+	}
+	heading := "**Review comment — @" + author + "**"
+	if state, _ := comment["state"].(string); state != "" {
+		heading += " · " + strings.ReplaceAll(strings.ToLower(state), "_", " ")
+	}
+	lines = append(lines, heading)
+	if commit, _ := comment["commit_id"].(string); commit != "" {
+		lines = append(lines, "Reviewed commit: `"+commit+"`")
+	}
+	if url, _ := comment["url"].(string); url != "" {
+		lines = append(lines, "[View on GitHub](<"+url+">)")
+	}
+	return "\n\n" + strings.Join(lines, "\n")
+}
+
+func stringJSON(value string) string {
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	_ = encoder.Encode(value)
+	return strings.TrimSuffix(buffer.String(), "\n")
+}
+
+func parseEvidenceLine(value string) (int, error) {
+	var line int
+	if _, err := fmt.Sscan(value, &line); err != nil {
+		return 0, err
+	}
+	if fmt.Sprint(line) != value {
+		return 0, errors.New("invalid line")
+	}
+	return line, nil
 }
 
 func withObservedHead(text, head string) string {
@@ -422,18 +583,20 @@ func (s *Store) Prepare(extra string) (int, error) {
 	if err := decodeJSON(fields["event"], &event); err != nil {
 		return 0, err
 	}
-	body, err := NotificationBody(event)
+	var snapshot Snapshot
+	if !isNull(fields["snapshot"]) {
+		if err := decodeJSON(fields["snapshot"], &snapshot); err != nil {
+			return 0, err
+		}
+	}
+	body, err := notificationBody(event, snapshot)
 	if err != nil {
 		return 0, err
 	}
 	if extra != "" {
 		body += "\n\n**Supplemental evidence**\n\n" + quoteEvidence(extra)
 	}
-	runes := []rune(body)
-	chunks := []string{}
-	for start := 0; start < len(runes); start += 6000 {
-		chunks = append(chunks, string(runes[start:min(start+6000, len(runes))]))
-	}
+	chunks := messageChunks(body)
 	if len(chunks) == 0 {
 		chunks = []string{"No additional evidence."}
 	}
@@ -466,6 +629,42 @@ func (s *Store) Prepare(extra string) (int, error) {
 		return 0, err
 	}
 	return len(messages), nil
+}
+
+func messageChunks(body string) []string {
+	// The 6000-rune limit is soft only for a code-comment directive: keeping its
+	// physical line intact is safer than inserting transport framing in it.
+	const limit = 6000
+	chunks := []string{}
+	chunk := []rune{}
+	flush := func() {
+		if len(chunk) != 0 {
+			chunks = append(chunks, string(chunk))
+			chunk = nil
+		}
+	}
+	for _, line := range strings.SplitAfter(body, "\n") {
+		lineRunes := []rune(line)
+		directive := strings.HasPrefix(line, "::code-comment{") && strings.HasSuffix(strings.TrimSuffix(line, "\n"), "}")
+		if directive && len(chunk) != 0 && len(chunk)+len(lineRunes) > limit {
+			flush()
+		}
+		if directive && len(lineRunes) > limit {
+			chunks = append(chunks, line)
+			continue
+		}
+		for len(lineRunes) != 0 {
+			remaining := limit - len(chunk)
+			take := min(remaining, len(lineRunes))
+			chunk = append(chunk, lineRunes[:take]...)
+			lineRunes = lineRunes[take:]
+			if len(chunk) == limit {
+				flush()
+			}
+		}
+	}
+	flush()
+	return chunks
 }
 
 func (s *Store) Message(part int) (Message, error) {

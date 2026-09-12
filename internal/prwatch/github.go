@@ -20,7 +20,7 @@ type ReadError struct{ Err error }
 func (e *ReadError) Error() string { return e.Err.Error() }
 func (e *ReadError) Unwrap() error { return e.Err }
 
-const commentFields = "id body url path line originalLine author { login }"
+const commentFields = "id body url path line originalLine diffSide author { login }"
 const pageInfoFields = "pageInfo { hasNextPage endCursor }"
 
 const threadQuery = `
@@ -427,7 +427,7 @@ func normalizeComment(raw any) (map[string]any, error) {
 		return nil, err
 	}
 	comment := map[string]any{"id": id, "body": body, "url": url, "author": author}
-	for _, field := range []string{"path", "state", "commit_id", "submitted_at"} {
+	for _, field := range []string{"path", "state", "commit_id", "submitted_at", "diffSide"} {
 		if value, exists := row[field]; exists {
 			if value != nil {
 				if _, ok := value.(string); !ok {

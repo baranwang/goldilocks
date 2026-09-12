@@ -81,8 +81,11 @@ func DecodeSend(event RuntimeEvent, observedAt time.Time) (ObservedSend, bool, e
 	if err := decodeJSON(event.ToolResponse, &response); err != nil {
 		return send, true, fmt.Errorf("decode send result: %w", err)
 	}
-	if response.IsError != nil && *response.IsError {
-		return send, true, nil
+	if response.IsError == nil {
+		return send, true, errors.New("send result is missing isError:false")
+	}
+	if *response.IsError {
+		return send, true, errors.New("send result reported isError:true")
 	}
 	returned := make([]string, 0, 1)
 	for _, block := range response.Content {
@@ -98,7 +101,7 @@ func DecodeSend(event RuntimeEvent, observedAt time.Time) (ObservedSend, bool, e
 		}
 	}
 	if len(returned) == 0 {
-		return send, true, nil
+		return send, true, errors.New("send result did not include a destination receipt")
 	}
 	if len(returned) != 1 || returned[0] != input.ThreadID {
 		return send, true, errors.New("send result does not unambiguously match destination thread")
@@ -203,15 +206,21 @@ func RuntimeManaged(root string, event RuntimeEvent) (bool, error) {
 			}
 		}
 	case "PostToolUse":
-		if event.ToolName != appSendTool || !validUUID(event.AgentID) {
+		if event.ToolName != appSendTool {
 			return false, nil
+		}
+		if !validUUID(event.AgentID) {
+			return false, errors.New("PostToolUse send agent_id must be a UUID")
 		}
 		var input struct {
 			ThreadID string `json:"threadId"`
 			Prompt   string `json:"prompt"`
 		}
-		if decodeJSON(event.ToolInput, &input) != nil || !validUUID(input.ThreadID) || input.Prompt == "" {
-			return false, nil
+		if err := decodeJSON(event.ToolInput, &input); err != nil {
+			return false, fmt.Errorf("decode PostToolUse send input: %w", err)
+		}
+		if !validUUID(input.ThreadID) || input.Prompt == "" {
+			return false, errors.New("PostToolUse send requires threadId UUID and prompt")
 		}
 		states, err := c.parentStates(input.ThreadID)
 		if err != nil {

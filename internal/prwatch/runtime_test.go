@@ -33,8 +33,20 @@ func TestAppReceiptDecodesObservedDesktopShape(t *testing.T) {
 
 	e.ToolResponse = json.RawMessage(`{"isError":false,"content":[]}`)
 	send, recognized, err = DecodeSend(e, specTime)
-	if err != nil || !recognized || send.Accepted {
+	if err == nil || !recognized || send.Accepted || !strings.Contains(err.Error(), "receipt") {
 		t.Fatalf("empty result counted as success: %+v %v %v", send, recognized, err)
+	}
+}
+
+func TestDecodeSendAcceptsSuccessfulDelegationReceipt(t *testing.T) {
+	e := RuntimeEvent{
+		Name: "PostToolUse", AgentID: specChild, ToolName: appSendTool, ToolUseID: "receipt-boundary-1",
+		ToolInput:    json.RawMessage(`{"threadId":"` + specParent + `","prompt":"exact delivery prompt"}`),
+		ToolResponse: json.RawMessage(`{"tool_name":"mcp__codex_app__send_message_to_thread","isError":false,"content":[{"type":"text","text":"{\"threadId\":\"` + specParent + `\",\"message\":\"Delegated to destination thread ` + specParent + `\"}"}]}`),
+	}
+	send, recognized, err := DecodeSend(e, specTime)
+	if err != nil || !recognized || !send.Accepted || send.ParentID != specParent || send.Prompt != "exact delivery prompt" {
+		t.Fatalf("successful delegation receipt rejected: %+v recognized=%v err=%v", send, recognized, err)
 	}
 }
 
@@ -45,8 +57,8 @@ func TestAppReceiptRequiresExactUnambiguousResult(t *testing.T) {
 		want     bool
 		wantErr  bool
 	}{
-		{"failed MCP result", `{"isError":true,"content":[{"type":"text","text":"{\"threadId\":\"` + specParent + `\"}"}]}`, false, false},
-		{"omitted isError", `{"content":[{"type":"text","text":"{\"threadId\":\"` + specParent + `\"}"}]}`, true, false},
+		{"failed MCP result", `{"isError":true,"content":[{"type":"text","text":"{\"threadId\":\"` + specParent + `\"}"}]}`, false, true},
+		{"omitted isError", `{"content":[{"type":"text","text":"{\"threadId\":\"` + specParent + `\"}"}]}`, false, true},
 		{"invalid isError type", `{"isError":"false","content":[]}`, false, true},
 		{"wrong returned thread", `{"isError":false,"content":[{"type":"text","text":"{\"threadId\":\"` + specChild + `\"}"}]}`, false, true},
 		{"conflicting returned threads", `{"isError":false,"content":[{"type":"text","text":"{\"threadId\":\"` + specParent + `\"}"},{"type":"text","text":"{\"threadId\":\"` + specChild + `\"}"}]}`, false, true},
@@ -62,6 +74,20 @@ func TestAppReceiptRequiresExactUnambiguousResult(t *testing.T) {
 				t.Fatalf("%+v recognized=%v err=%v", send, recognized, err)
 			}
 		})
+	}
+}
+
+func TestRuntimeManagedDiagnosesMalformedMatchingPostToolUse(t *testing.T) {
+	c, err := NewController(t.TempDir(), func() time.Time { return specTime })
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := RuntimeEvent{
+		Name: "PostToolUse", AgentID: specChild, ToolName: appSendTool,
+		ToolInput: json.RawMessage(`[]`),
+	}
+	if managed, err := RuntimeManaged(c.Root, e); err == nil || managed || !strings.Contains(err.Error(), "PostToolUse") {
+		t.Fatalf("malformed matching payload was silent: managed=%v err=%v", managed, err)
 	}
 }
 

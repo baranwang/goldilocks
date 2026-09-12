@@ -1,1 +1,1 @@
-{"data":{"node":{"comments":{"nodes":[{"id":"T1C2","body":"nested page","url":"https://github.com/example/project/pull/7","author":{"login":"r"},"path":"app.go","originalLine":2}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
+{"data":{"node":{"comments":{"nodes":[{"id":"T1C2","body":"nested page","url":"https://github.com/example/project/pull/7","author":{"login":"r"},"path":"app.go","originalLine":2,"diffSide":"LEFT"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
