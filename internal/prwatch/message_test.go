@@ -212,6 +212,43 @@ func TestNotificationFallsBackToMarkdownForUntargetableReviewComment(t *testing.
 	}
 }
 
+func TestNotificationCodeCommentEscapesAndPrioritizes(t *testing.T) {
+	for _, tc := range []struct {
+		name, badge string
+		priority    string
+	}{
+		{"p1", "P1", " priority=1"},
+		{"p2", "P2", " priority=2"},
+		{"p3", "P3", " priority=3"},
+		{"none", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := "**heading**\nquote \\\" and slash \\\\ and newline\nsecond"
+			if tc.badge != "" {
+				body = "**<sub><sub>![" + tc.badge + " Badge](https://img.shields.io/badge/" + tc.badge + "-orange)</sub></sub>  Heading**\n" + body
+			}
+			comment := map[string]any{"path": "x.go", "line": 7, "originalLine": 99, "author": "a", "body": body}
+			out, err := pw.NotificationBody(pw.Event{Type: "update", Changes: pw.Changes{"threads": map[string]any{"t": map[string]any{"comments": []any{comment}}}}})
+			check(t, err)
+			if !strings.Contains(out, `file="x.go" start=7 end=7`+tc.priority+`}`) {
+				t.Fatalf("missing location/priority: %s", out)
+			}
+			if !strings.Contains(out, `\"`) || !strings.Contains(out, `\\`) || !strings.Contains(out, `\n`) {
+				t.Fatalf("body was not JSON escaped: %s", out)
+			}
+		})
+	}
+}
+
+func TestNotificationOutdatedOriginalLineFallsBackToMarkdown(t *testing.T) {
+	comment := map[string]any{"path": "x.go", "originalLine": 9, "author": "a", "body": "old"}
+	out, err := pw.NotificationBody(pw.Event{Type: "update", Changes: pw.Changes{"threads": map[string]any{"t": map[string]any{"outdated": true, "comments": []any{comment}}}}})
+	check(t, err)
+	if strings.Contains(out, "::code-comment") || !strings.Contains(out, "original line 9") {
+		t.Fatalf("outdated original line should use markdown: %s", out)
+	}
+}
+
 func TestNotificationRendersEachTerminalObservationOnceWithEvidence(t *testing.T) {
 	for _, tc := range []struct {
 		kind, summary string

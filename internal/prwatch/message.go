@@ -1,10 +1,12 @@
 package prwatch
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -161,7 +163,13 @@ func observationBody(kind string, changes Changes, includeTerminalSummary bool) 
 			if err != nil {
 				return "", err
 			}
-			text, err := formatFeedback(comment, "Review comment", outdated)
+			text, rendered, err := formatCodeComment(comment, outdated)
+			if err != nil {
+				return "", err
+			}
+			if !rendered {
+				text, err = formatFeedback(comment, "Review comment", outdated)
+			}
 			if err != nil {
 				return "", err
 			}
@@ -282,6 +290,59 @@ func formatFeedback(comment map[string]any, kind string, outdated bool) (string,
 		lines = append(lines, "\n"+quoteEvidence(body))
 	}
 	return strings.Join(lines, "\n"), nil
+}
+
+var reviewBadge = regexp.MustCompile(`!\[P([123]) Badge\]\([^)]*\)`)
+
+func formatCodeComment(comment map[string]any, outdated bool) (string, bool, error) {
+	path, _ := comment["path"].(string)
+	line, ok := evidenceNumber(comment["line"])
+	if path == "" || !ok || outdated {
+		return "", false, nil
+	}
+	lineNumber, err := parseEvidenceLine(line)
+	if err != nil || lineNumber < 1 {
+		return "", false, nil
+	}
+	author, _ := comment["author"].(string)
+	if author == "" {
+		author = "unknown"
+	}
+	body, _ := comment["body"].(string)
+	title := "Review comment — @" + author
+	for _, candidate := range strings.Split(body, "\n") {
+		if strings.HasPrefix(candidate, "**") && strings.HasSuffix(candidate, "**") {
+			title = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(candidate, "**"), "**"))
+			if end := strings.LastIndex(title, "</sub></sub>"); end >= 0 {
+				title = strings.TrimSpace(title[end+len("</sub></sub>"):])
+			}
+			break
+		}
+	}
+	attrs := []string{"title=" + stringJSON(title), "body=" + stringJSON(body), "file=" + stringJSON(path), fmt.Sprintf("start=%d end=%d", lineNumber, lineNumber)}
+	if match := reviewBadge.FindStringSubmatch(body); len(match) == 2 {
+		attrs = append(attrs, "priority="+match[1])
+	}
+	return "::code-comment{" + strings.Join(attrs, " ") + "}", true, nil
+}
+
+func stringJSON(value string) string {
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	_ = encoder.Encode(value)
+	return strings.TrimSuffix(buffer.String(), "\n")
+}
+
+func parseEvidenceLine(value string) (int, error) {
+	var line int
+	if _, err := fmt.Sscan(value, &line); err != nil {
+		return 0, err
+	}
+	if fmt.Sprint(line) != value {
+		return 0, errors.New("invalid line")
+	}
+	return line, nil
 }
 
 func withObservedHead(text, head string) string {
