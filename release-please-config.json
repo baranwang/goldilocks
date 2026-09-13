@@ -1,10 +1,14 @@
 {
-  "release-type": "go",
-  "extra-files": [
-    {
-      "type": "json",
-      "path": ".codex-plugin/plugin.json",
-      "jsonpath": "$.version"
+  "packages": {
+    ".": {
+      "release-type": "go",
+      "extra-files": [
+        {
+          "type": "json",
+          "path": ".codex-plugin/plugin.json",
+          "jsonpath": "$.version"
+        }
+      ]
     }
-  ]
+  }
 }
