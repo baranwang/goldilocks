@@ -1,5 +1,12 @@
 name: CI
-on: [push, pull_request, workflow_call]
+on:
+  push:
+  pull_request:
+  workflow_call:
+    inputs:
+      ref:
+        required: false
+        type: string
 permissions:
   contents: read
 jobs:
@@ -10,6 +17,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.6'

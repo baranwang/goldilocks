@@ -1,22 +1,24 @@
 name: Release Please Checksums
 
 on:
-  pull_request_target:
-    types: [opened, synchronize, reopened]
+  workflow_call:
+    inputs:
+      branch:
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 jobs:
   refresh:
-    if: >-
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      startsWith(github.event.pull_request.head.ref, 'release-please--branches--main')
     runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.update.outputs.sha }}
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: ${{ inputs.branch }}
           fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
@@ -32,17 +34,47 @@ jobs:
         env:
           GOLDILOCKS_VERSION: ${{ env.GOLDILOCKS_VERSION }}
       - name: Update pinned checksums
+        id: update
         env:
-          RELEASE_PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          RELEASE_PR_BRANCH: ${{ inputs.branch }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          if cmp -s dist/SHA256SUMS scripts/SHA256SUMS; then
-            exit 0
+          if ! cmp -s dist/SHA256SUMS scripts/SHA256SUMS; then
+            cp dist/SHA256SUMS scripts/SHA256SUMS
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git add scripts/SHA256SUMS
+            git commit -m "chore(release): refresh release checksums" \
+              -m "Co-authored-by: Codex <noreply@openai.com>"
+            git push origin "HEAD:$RELEASE_PR_BRANCH"
           fi
-          cp dist/SHA256SUMS scripts/SHA256SUMS
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add scripts/SHA256SUMS
-          git commit -m "chore(release): refresh release checksums" \
-            -m "Co-authored-by: Codex <noreply@openai.com>"
-          git push origin "HEAD:$RELEASE_PR_BRANCH"
+          sha=$(git rev-parse HEAD)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$sha" \
+            -f state=pending -f context='Release PR / CI' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+
+  verify:
+    needs: refresh
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.refresh.outputs.sha }}
+
+  report:
+    needs: [refresh, verify]
+    if: always() && needs.refresh.outputs.sha != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report CI on the release PR commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PR_SHA: ${{ needs.refresh.outputs.sha }}
+          VERIFY_RESULT: ${{ needs.verify.result }}
+        shell: bash
+        run: |
+          state=failure
+          if [ "$VERIFY_RESULT" = success ]; then state=success; fi
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$RELEASE_PR_SHA" \
+            -f "state=$state" -f context='Release PR / CI' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null

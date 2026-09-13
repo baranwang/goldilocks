@@ -1,0 +1,11 @@
+name: Release pipeline smoke
+on:
+  push:
+    branches: [codex/release-token-fix]
+permissions:
+  contents: write
+jobs:
+  prepare:
+    uses: ./.github/workflows/release-please-checksums.yml
+    with:
+      branch: codex/release-token-fix

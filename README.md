@@ -136,9 +136,16 @@ Commit the checksum update with the source/version change. CI builds snapshots
 on Linux, macOS, and Windows, verifies all six assets against the committed
 checksums, and exercises the native launcher and all five hook commands.
 
-After validation, push a tag matching the plugin version (for example,
-`v0.3.0`). The Release workflow waits for all three systems, then GoReleaser
-builds and publishes the executables and `SHA256SUMS`. A post-build hook checks
+Every push to `main` runs Release Please, which creates or updates a release PR
+from Conventional Commits. That PR updates the plugin version, release manifest,
+and changelog. The same workflow refreshes its checksums and calls the three-OS
+CI workflow, reporting `Release PR / CI` on the resulting PR commit. These calls
+are explicit because writes made with `GITHUB_TOKEN` do not trigger new workflows.
+
+Merge the release PR to publish: Release Please creates its version tag and
+GitHub Release, then GoReleaser uploads the executables and `SHA256SUMS` in the
+same run. Only the built-in `GITHUB_TOKEN` is needed; no additional secret or
+manual workflow trigger is required. A post-build hook checks
 each executable against the pinned manifest before publication; a mismatch
 aborts the release. Snapshots never publish and allow checksum regeneration.
 Publish the assets before distributing the matching plugin version. Releases
