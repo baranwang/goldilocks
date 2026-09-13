@@ -6,17 +6,25 @@ on:
 
 permissions:
   contents: write
+  statuses: write
   issues: write
   pull-requests: write
+
+concurrency:
+  group: release-please-main
+  cancel-in-progress: false
 
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    outputs:
+      pr: ${{ steps.release.outputs.pr }}
+      prs_created: ${{ steps.release.outputs.prs_created }}
     steps:
       - id: release
         uses: googleapis/release-please-action@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ github.token }}
           config-file: release-please-config.json
       - if: steps.release.outputs.release_created == 'true'
         uses: actions/checkout@v6
@@ -30,12 +38,25 @@ jobs:
           cache: false
       - if: steps.release.outputs.release_created == 'true'
         name: Verify release artifacts
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag_name }}
         shell: bash
         run: |
-          test "$(jq -r .version .codex-plugin/plugin.json)" = "${{ steps.release.outputs.version }}"
-          echo "GOLDILOCKS_VERSION=${{ steps.release.outputs.version }}" >> "$GITHUB_ENV"
+          test "$(jq -r .version .codex-plugin/plugin.json)" = "$RELEASE_VERSION"
+          test "$(jq -r '."."' .release-please-manifest.json)" = "$RELEASE_VERSION"
+          test "$RELEASE_TAG" = "v$RELEASE_VERSION"
+          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+          echo "GOLDILOCKS_VERSION=$RELEASE_VERSION" >> "$GITHUB_ENV"
       - if: steps.release.outputs.release_created == 'true'
         run: go test ./... -count=1
+      - if: steps.release.outputs.release_created == 'true'
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: v2.18.1
+          args: release --snapshot --clean
+      - if: steps.release.outputs.release_created == 'true'
+        run: go run ./scripts/verify.go
       - if: steps.release.outputs.release_created == 'true'
         uses: goreleaser/goreleaser-action@v7
         with:
@@ -44,3 +65,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GOLDILOCKS_VERSION: ${{ env.GOLDILOCKS_VERSION }}
+
+  # GITHUB_TOKEN writes do not trigger another push/PR workflow.
+  prepare-release-pr:
+    needs: release-please
+    if: needs.release-please.outputs.prs_created == 'true'
+    uses: ./.github/workflows/release-please-checksums.yml
+    with:
+      branch: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
