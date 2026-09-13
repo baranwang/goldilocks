@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: write
+  statuses: write
 
 jobs:
   refresh:
