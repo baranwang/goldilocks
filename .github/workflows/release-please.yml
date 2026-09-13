@@ -16,7 +16,7 @@ jobs:
       - id: release
         uses: googleapis/release-please-action@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           config-file: release-please-config.json
       - if: steps.release.outputs.release_created == 'true'
         uses: actions/checkout@v6
@@ -42,5 +42,5 @@ jobs:
           version: v2.18.1
           args: release --clean
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           GOLDILOCKS_VERSION: ${{ env.GOLDILOCKS_VERSION }}
