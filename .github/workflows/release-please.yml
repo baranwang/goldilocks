@@ -1,7 +1,8 @@
 name: Release Please
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [main]
 
 permissions:
   contents: write
@@ -12,8 +13,34 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      - uses: googleapis/release-please-action@v4
+      - id: release
+        uses: googleapis/release-please-action@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
-          skip-github-release: true
+      - if: steps.release.outputs.release_created == 'true'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.release.outputs.sha }}
+          fetch-depth: 0
+      - if: steps.release.outputs.release_created == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.6'
+          cache: false
+      - if: steps.release.outputs.release_created == 'true'
+        name: Verify release artifacts
+        shell: bash
+        run: |
+          test "$(jq -r .version .codex-plugin/plugin.json)" = "${{ steps.release.outputs.version }}"
+          echo "GOLDILOCKS_VERSION=${{ steps.release.outputs.version }}" >> "$GITHUB_ENV"
+      - if: steps.release.outputs.release_created == 'true'
+        run: go test ./... -count=1
+      - if: steps.release.outputs.release_created == 'true'
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: v2.18.1
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GOLDILOCKS_VERSION: ${{ env.GOLDILOCKS_VERSION }}
