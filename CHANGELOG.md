@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.2](https://github.com/baranwang/goldilocks/compare/v0.4.1...v0.4.2) (2026-09-13)
+
+
+### Bug Fixes
+
+* **release:** repair existing release assets ([74aecd7](https://github.com/baranwang/goldilocks/commit/74aecd753f023d1f9c60790af03b02b66de57569))
+* **release:** separate release preparation from publishing ([e7cd899](https://github.com/baranwang/goldilocks/commit/e7cd899aa02ad8fbaba06ef68cb4a29395dd43fa))
+* **release:** separate release preparation from publishing ([031d8aa](https://github.com/baranwang/goldilocks/commit/031d8aa1d46e80bbf0922abf01b83acb9d4d5f0a))
+
 ## [0.4.1](https://github.com/baranwang/goldilocks/compare/v0.4.0...v0.4.1) (2026-09-13)
 
 
