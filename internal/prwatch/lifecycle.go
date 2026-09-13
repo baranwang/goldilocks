@@ -499,7 +499,7 @@ func (c *Controller) childRecoveryReason(store *Store) string {
 	control := store.Data.Control
 	launcher := resolvedLauncher()
 	ticket := ticketPath(store.Path)
-	advance := managedCommand(launcher, "controller", "advance", "--ticket", ticket, "--agent-id", control.AgentID)
+	advance := managedCommand(launcher, "watcher", "advance", "--ticket-file", ticket)
 	switch {
 	case hasPending(store) || control.Outbox != nil:
 		return "Run " + advance + " to deliver the saved pending event."
@@ -508,7 +508,7 @@ func (c *Controller) childRecoveryReason(store *Store) string {
 	case control.Worker.HostHandle != "" && !control.Worker.Ended:
 		return "Wait on the saved execution handle " + control.Worker.HostHandle + "."
 	case control.Worker.ID != "" && !control.Worker.Ended:
-		yield := managedCommand(launcher, "controller", "yield", "--ticket", ticket, "--agent-id", control.AgentID)
+		yield := managedCommand(launcher, "watcher", "yield", "--ticket-file", ticket)
 		return "Run " + yield + " for the lost execution, then wait for its worker lock to be released."
 	default:
 		return "Run " + advance + " for the saved watcher ticket."
@@ -518,11 +518,11 @@ func (c *Controller) childRecoveryReason(store *Store) string {
 func (c *Controller) parentRecoveryReason(state State) string {
 	control := state.Control
 	launcher := resolvedLauncher()
-	status := managedCommand(launcher, "controller", "status", "--parent-id", control.ParentID, "--pr", state.PRURL)
+	status := managedCommand(launcher, "watcher", "status", "--pr", state.PRURL)
 	if control.Stage == NeedsAttention {
 		return "Run " + status + " and report the saved PR watcher failure and recovery details before stopping."
 	}
-	resume := managedCommand(launcher, "controller", "resume", "--parent-id", control.ParentID, "--pr", state.PRURL)
+	resume := managedCommand(launcher, "watcher", "resume", "--pr", state.PRURL)
 	return "Run " + status + " to check PR watcher startup; if it is still incomplete, run " + resume + "."
 }
 
