@@ -1,6 +1,6 @@
 {
   "name": "goldilocks",
-  "version": "0.3.0",
+  "version": "0.4.1",
   "description": "Right-sized subagents and continuous PR monitoring in one Codex plugin.",
   "author": {
     "name": "Baran Wang",
