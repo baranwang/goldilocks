@@ -7,6 +7,11 @@ on:
         description: Type RELEASE to publish the version from main
         required: true
         type: string
+      repair:
+        description: Set true only to fill assets for an existing empty release
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -28,13 +33,15 @@ jobs:
           RELEASE_CONFIRM: ${{ inputs.confirm }}
         run: test "$RELEASE_CONFIRM" = "RELEASE"
       - name: Read and validate version
+        env:
+          RELEASE_REPAIR: ${{ inputs.repair }}
         shell: bash
         run: |
           version=$(jq -r .version .codex-plugin/plugin.json)
           manifest=$(jq -r '."."' .release-please-manifest.json)
           test -n "$version" && test "$version" = "$manifest"
           echo "GOLDILOCKS_VERSION=$version" >> "$GITHUB_ENV"
-          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1; then
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1 && [ "$RELEASE_REPAIR" != "true" ]; then
             echo "tag v$version already exists" >&2
             exit 1
           fi
@@ -49,6 +56,9 @@ jobs:
       - name: Create release tag
         shell: bash
         run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/v$GOLDILOCKS_VERSION" >/dev/null 2>&1; then
+            exit 0
+          fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git tag -a "v$GOLDILOCKS_VERSION" -m "Release v$GOLDILOCKS_VERSION"
