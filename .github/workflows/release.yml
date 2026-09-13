@@ -1,30 +1,72 @@
 name: Release
+
 on:
-  push:
-    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type RELEASE to publish the version from main
+        required: true
+        type: string
+      repair:
+        description: Set true only to fill assets for an existing empty release
+        required: false
+        default: false
+        type: boolean
+
 permissions:
-  contents: read
+  contents: write
+
 jobs:
-  validate:
-    uses: ./.github/workflows/ci.yml
   release:
-    needs: validate
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: main
           fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.6'
           cache: false
-      - name: Verify tag matches plugin version
-        run: test "$GITHUB_REF_NAME" = "v$(jq -r .version .codex-plugin/plugin.json)"
+      - name: Confirm release
+        env:
+          RELEASE_CONFIRM: ${{ inputs.confirm }}
+        run: test "$RELEASE_CONFIRM" = "RELEASE"
+      - name: Read and validate version
+        env:
+          RELEASE_REPAIR: ${{ inputs.repair }}
+        shell: bash
+        run: |
+          version=$(jq -r .version .codex-plugin/plugin.json)
+          manifest=$(jq -r '."."' .release-please-manifest.json)
+          test -n "$version" && test "$version" = "$manifest"
+          echo "GOLDILOCKS_VERSION=$version" >> "$GITHUB_ENV"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1 && [ "$RELEASE_REPAIR" != "true" ]; then
+            echo "tag v$version already exists" >&2
+            exit 1
+          fi
+      - run: go test ./... -count=1
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: v2.18.1
+          args: release --snapshot --clean
+        env:
+          GOLDILOCKS_VERSION: ${{ env.GOLDILOCKS_VERSION }}
+      - run: go run ./scripts/verify.go
+      - name: Create release tag
+        shell: bash
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/v$GOLDILOCKS_VERSION" >/dev/null 2>&1; then
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git tag -a "v$GOLDILOCKS_VERSION" -m "Release v$GOLDILOCKS_VERSION"
+          git push origin "v$GOLDILOCKS_VERSION"
       - uses: goreleaser/goreleaser-action@v7
         with:
           version: v2.18.1
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          GOLDILOCKS_VERSION: ${{ env.GOLDILOCKS_VERSION }}

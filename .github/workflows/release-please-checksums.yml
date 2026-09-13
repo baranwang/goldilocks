@@ -1,0 +1,48 @@
+name: Release Please Checksums
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'release-please--branches--main')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.6'
+          cache: false
+      - name: Read plugin version
+        shell: bash
+        run: echo "GOLDILOCKS_VERSION=$(jq -r .version .codex-plugin/plugin.json)" >> "$GITHUB_ENV"
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: v2.18.1
+          args: release --snapshot --clean
+        env:
+          GOLDILOCKS_VERSION: ${{ env.GOLDILOCKS_VERSION }}
+      - name: Update pinned checksums
+        env:
+          RELEASE_PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+        shell: bash
+        run: |
+          if cmp -s dist/SHA256SUMS scripts/SHA256SUMS; then
+            exit 0
+          fi
+          cp dist/SHA256SUMS scripts/SHA256SUMS
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add scripts/SHA256SUMS
+          git commit -m "chore(release): refresh release checksums" \
+            -m "Co-authored-by: Codex <noreply@openai.com>"
+          git push origin "HEAD:$RELEASE_PR_BRANCH"
